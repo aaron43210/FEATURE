@@ -357,7 +357,7 @@ def main():
     uploaded = st.file_uploader(
         "Upload Drone Image (TIF, JPG, PNG)",
         type=["tif", "tiff", "jpg", "jpeg", "png"],
-        help="Supports files up to 25GB. Browser uploads over 25GB may be unstable.",
+        help="Supports files up to 20GB. Browser uploads over 20GB may be unstable.",
     )
 
     if uploaded:

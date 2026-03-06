@@ -39,5 +39,5 @@ brain/
 *.log
 
 # Streamlit
-.streamlit/
+## .streamlit/ removed to allow pushing Streamlit config
 static/
