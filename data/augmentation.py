@@ -72,7 +72,10 @@ def get_train_transforms(image_size: int = 512) -> A.Compose:
                         p=1.0,
                     ),
                     A.RGBShift(
-                        r_shift_limit=10, g_shift_limit=10, b_shift_limit=10, p=1.0
+                        r_shift_limit=10,
+                        g_shift_limit=10,
+                        b_shift_limit=10,
+                        p=1.0,
                     ),
                 ],
                 p=0.6,
@@ -293,7 +296,11 @@ def visualize_augmentation(
         if hasattr(aug_image, "numpy"):
             aug_image = aug_image.numpy().transpose(1, 2, 0)
             # Denormalize for visualization
-            aug_image = aug_image * [0.229, 0.224, 0.225] + [0.485, 0.456, 0.406]
+            aug_image = aug_image * [0.229, 0.224, 0.225] + [
+                0.485,
+                0.456,
+                0.406,
+            ]
             aug_image = np.clip(aug_image, 0, 1)
 
         axes[i, 0].imshow(aug_image)
@@ -305,7 +312,11 @@ def visualize_augmentation(
 
             # Overlay
             overlay = aug_image.copy()
-            overlay[aug_building_mask > 0] = [1, 0, 0]  # Red overlay for buildings
+            overlay[aug_building_mask > 0] = [
+                1,
+                0,
+                0,
+            ]  # Red overlay for buildings
             axes[i, 2].imshow(overlay)
             axes[i, 2].axis("off")
 

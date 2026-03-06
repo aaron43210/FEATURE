@@ -569,29 +569,33 @@ def create_dataloaders(
         val_ds_full = SvamitvaDataset(
             val_dir, image_size, get_val_transforms(image_size), "val"
         )
-        tr_ds = train_ds
-        val_ds = val_ds_full
-        logger.info(f"Separate val dir: {len(tr_ds)} train / {len(val_ds)} val tiles")
+        tr_ds_final = train_ds
+        val_ds_final = val_ds_full
+        logger.info(
+            f"Separate val dir: {len(tr_ds_final)} train / {len(val_ds_final)} val tiles"
+        )
     else:
         total = len(train_ds)
         val_size = max(1, int(total * val_split))
-        from torch.utils.data import Subset, Dataset
+        from torch.utils.data import Subset
 
-        tr_ds: Dataset = Subset(train_ds, list(range(total - val_size)))
-        val_ds: Dataset = Subset(train_ds, list(range(total - val_size, total)))
-        logger.info(f"Auto-split: {len(tr_ds)} train / {len(val_ds)} val tiles")
+        tr_ds_final = Subset(train_ds, list(range(total - val_size)))
+        val_ds_final = Subset(train_ds, list(range(total - val_size, total)))
+        logger.info(
+            f"Auto-split: {len(tr_ds_final)} train / {len(val_ds_final)} val tiles"
+        )
 
     train_loader = torch.utils.data.DataLoader(
-        tr_ds,
+        tr_ds_final,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
         pin_memory=(num_workers > 0),
-        drop_last=len(tr_ds) > batch_size,
+        drop_last=len(tr_ds_final) > batch_size,
         persistent_workers=(num_workers > 0),
     )
     val_loader = torch.utils.data.DataLoader(
-        val_ds,
+        val_ds_final,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,

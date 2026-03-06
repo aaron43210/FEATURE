@@ -14,7 +14,7 @@ Features:
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
@@ -200,10 +200,11 @@ class Trainer:
 
         # Optimizer
         if hasattr(model, "get_param_groups"):
-            param_groups = model.get_param_groups(config.learning_rate)
+            param_groups = getattr(model, "get_param_groups")(config.learning_rate)
         else:
             param_groups = model.parameters()
 
+        self.optimizer: torch.optim.Optimizer
         if config.optimizer == "adamw":
             self.optimizer = torch.optim.AdamW(
                 param_groups,
@@ -219,6 +220,7 @@ class Trainer:
             )
 
         # Scheduler
+        self.scheduler: Any
         if config.optimizer == "adamw":
             # Using OneCycleLR for faster convergence
             self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -255,7 +257,11 @@ class Trainer:
         )
 
         # History
-        self.history = {"train_loss": [], "val_loss": [], "metrics": []}
+        self.history: Dict[str, list] = {
+            "train_loss": [],
+            "val_loss": [],
+            "metrics": [],
+        }
 
     def fit(self):
         """Run full training loop."""

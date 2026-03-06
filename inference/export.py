@@ -202,8 +202,8 @@ def export_predictions(
             mask,
             transform,
             threshold,
-            float(info["min_area"]),
-            float(info["simplify"]),
+            float(info["min_area"]),  # type: ignore
+            float(info["simplify"]),  # type: ignore
         )
 
         if not polygons:

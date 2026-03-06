@@ -68,7 +68,10 @@ FEATURES = {
     "waterbody_line_mask": ("〰️ Water Lines", (80, 180, 255)),
     "waterbody_point_mask": ("📍 Wells / Water Points", (100, 200, 255)),
     "utility_line_mask": ("⚡ Utility Lines", (50, 220, 100)),
-    "utility_point_mask": ("🔌 Utility Points (Transformers/Tanks)", (100, 255, 150)),
+    "utility_point_mask": (
+        "🔌 Utility Points (Transformers/Tanks)",
+        (100, 255, 150),
+    ),
     "bridge_mask": ("🌉 Bridges", (220, 130, 50)),
     "railway_mask": ("🚂 Railways", (180, 80, 255)),
 }
@@ -98,7 +101,9 @@ def load_model(ckpt_path: str):
 
     # Detect backbone
     backbone = (
-        "sam2" if any("encoder.encoder" in k for k in state.keys()) else "resnet50"
+        "sam2"
+        if any("encoder.encoder" in k for k in state.keys())
+        else "resnet50"
     )
 
     model = SvamitvaModel(backbone=backbone, pretrained=False)
@@ -112,7 +117,9 @@ def find_checkpoints():
     ckpt_dir = Path("checkpoints")
     if not ckpt_dir.exists():
         return []
-    pts = sorted(ckpt_dir.glob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    pts = sorted(
+        ckpt_dir.glob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
     return [str(p) for p in pts]
 
 
@@ -157,7 +164,9 @@ def load_image(uploaded_file) -> tuple:
     return img, geo_meta
 
 
-def downsample_for_display(image: np.ndarray, max_size: int = 2000) -> np.ndarray:
+def downsample_for_display(
+    image: np.ndarray, max_size: int = 2000
+) -> np.ndarray:
     """Resize image for stable browser display if it exceeds max_size."""
     if image is None:
         return None
@@ -226,7 +235,7 @@ def run_inference(image_np, model, selected_keys):
             if h < TILE_SIZE // 4 or w < TILE_SIZE // 4:
                 continue
 
-            tile = image_np[y : y + h, x_pos : x_pos + w].copy()
+            tile = image_np[y:y+h, x_pos:x_pos+w].copy()
 
             # Apply stretch if not uint8
             if stretch:
@@ -234,7 +243,8 @@ def run_inference(image_np, model, selected_keys):
                 for c in range(3):
                     lo, hi = stretch.get(c, (0, 1))
                     tile[..., c] = (
-                        np.clip((tile[..., c] - lo) / (hi - lo + 1e-6), 0, 1) * 255
+                        np.clip((tile[..., c] - lo) / (hi - lo + 1e-6), 0, 1)
+                        * 255
                     )
                 tile = tile.astype(np.uint8)
 
@@ -246,7 +256,11 @@ def run_inference(image_np, model, selected_keys):
             img = tile.astype(np.float32) / 255.0
             img = (img - MEAN) / STD
             tensor = (
-                torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float().to(DEVICE)
+                torch.from_numpy(img)
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .float()
+                .to(DEVICE)
             )
 
             out = model(tensor)
@@ -256,15 +270,15 @@ def run_inference(image_np, model, selected_keys):
                 if key in out:
                     logits = out[key].squeeze().cpu().numpy()
                     if key == "roof_type_mask":
-                        roof_logit_accum[:, y : y + h, x_pos : x_pos + w] += (
+                        roof_logit_accum[:, y:y+h, x_pos:x_pos+w] += (
                             logits[:, :h, :w] * blend[np.newaxis]
                         )
                     else:
-                        logit_accum[key][y : y + h, x_pos : x_pos + w] += (
+                        logit_accum[key][y:y+h, x_pos:x_pos+w] += (
                             logits[:h, :w] * blend
                         )
 
-            weight_map[y : y + h, x_pos : x_pos + w] += blend
+            weight_map[y:y+h, x_pos:x_pos+w] += blend
 
     # Normalize and activate
     weight_map = np.maximum(weight_map, 1e-8)
@@ -285,7 +299,9 @@ def run_inference(image_np, model, selected_keys):
     return results
 
 
-def create_overlay(image, predictions, threshold=0.5, alpha=0.4, target_key=None):
+def create_overlay(
+    image, predictions, threshold=0.5, alpha=0.4, target_key=None
+):
     """Create visualization overlay. If target_key is set, only show that layer."""
     composite = image.copy()
     for key, mask in predictions.items():
@@ -369,10 +385,14 @@ def main():
             return
 
         selected_keys = [k for k, v in selected.items() if v]
-        if "roof_type_mask" not in selected_keys and selected.get("building_mask"):
+        if "roof_type_mask" not in selected_keys and selected.get(
+            "building_mask"
+        ):
             selected_keys.append("roof_type_mask")
 
-        if st.button("🚀 Extract Features", type="primary", use_container_width=True):
+        if st.button(
+            "🚀 Extract Features", type="primary", use_container_width=True
+        ):
             with st.spinner("Running AI inference..."):
                 st.session_state.predictions = run_inference(
                     image_np, model, selected_keys
@@ -388,7 +408,9 @@ def main():
                     FEATURES[k][0] for k in predictions.keys() if k in FEATURES
                 ]
                 layer_options = ["🏠 All Features"] + feat_opts
-                selected_viz = st.selectbox("🎯 Visualization Layer", layer_options)
+                selected_viz = st.selectbox(
+                    "🎯 Visualization Layer", layer_options
+                )
 
                 target_key = None
                 if selected_viz != "🏠 All Features":
@@ -397,11 +419,16 @@ def main():
                     ][0]
 
                 overlay = create_overlay(
-                    image_np, predictions, threshold, alpha, target_key=target_key
+                    image_np,
+                    predictions,
+                    threshold,
+                    alpha,
+                    target_key=target_key,
                 )
                 display_overlay = downsample_for_display(overlay)
                 st.image(
-                    display_overlay, caption=f"Results: {selected_viz} (Downsampled)"
+                    display_overlay,
+                    caption=f"Results: {selected_viz} (Downsampled)",
                 )
 
             # Roof type breakdown
@@ -451,14 +478,18 @@ def main():
                             roof_type_mask=predictions.get("roof_type_mask"),
                         )
                     else:
-                        st.warning("Export requires GeoTIFF input for CRS coordinates")
+                        st.warning(
+                            "Export requires GeoTIFF input for CRS coordinates"
+                        )
                         return
 
                     # Zip
                     zip_buf = io.BytesIO()
                     out_dir = Path(tmpdir) / "output"
                     if out_dir.exists():
-                        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                        with zipfile.ZipFile(
+                            zip_buf, "w", zipfile.ZIP_DEFLATED
+                        ) as zf:
                             for f in out_dir.rglob("*"):
                                 if f.is_file():
                                     zf.write(f, f.name)
