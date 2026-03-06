@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 def set_seed(seed: int = 42):
     """Set random seeds for reproducibility."""
     import random
+
     import numpy as np
 
     random.seed(seed)

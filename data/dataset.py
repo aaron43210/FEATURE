@@ -26,7 +26,7 @@ Dataset structure expected:
 
 import logging
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -232,7 +232,7 @@ class SvamitvaDataset(Dataset):
                 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
                 k = 3
                 _, labels, centers = cv2.kmeans(
-                    pixels, k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
+                    pixels, k, None, criteria, 3, cv2.KMEANS_PP_CENTERS  # type: ignore
                 )
 
                 # The corners of the orthophoto are almost always NoData background
@@ -283,8 +283,8 @@ class SvamitvaDataset(Dataset):
 
     # ── Dataset scanner ────────────────────────────────────────────────────────
 
-    def _scan_dataset(self) -> List[Dict]:
-        samples = []
+    def _scan_dataset(self) -> List[Dict[str, Any]]:
+        samples: List[Dict[str, Any]] = []
 
         # Collect all map directories (either children of roots or roots themselves)
         candidate_dirs = []
@@ -523,11 +523,11 @@ class SvamitvaDataset(Dataset):
 
         if self.transform:
             transformed = self.transform(image=image, **masks)
-            result: Dict[str, torch.Tensor] = {"image": transformed["image"]}
+            result: Dict[str, Any] = {"image": transformed["image"]}
             for k in masks:
                 result[k] = transformed[k].long()
         else:
-            result = {"image": torch.from_numpy(image).permute(2, 0, 1).float()}
+            result = {"image": torch.from_numpy(image).permute(2, 0, 1).float()}  # type: ignore
             for k, v in masks.items():
                 result[k] = torch.from_numpy(v).long()
 
@@ -575,10 +575,10 @@ def create_dataloaders(
     else:
         total = len(train_ds)
         val_size = max(1, int(total * val_split))
-        from torch.utils.data import Subset
+        from torch.utils.data import Subset, Dataset
 
-        tr_ds = Subset(train_ds, list(range(total - val_size)))
-        val_ds = Subset(train_ds, list(range(total - val_size, total)))
+        tr_ds: Dataset = Subset(train_ds, list(range(total - val_size)))
+        val_ds: Dataset = Subset(train_ds, list(range(total - val_size, total)))
         logger.info(f"Auto-split: {len(tr_ds)} train / {len(val_ds)} val tiles")
 
     train_loader = torch.utils.data.DataLoader(

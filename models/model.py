@@ -14,9 +14,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .sam2_encoder import SAM2Encoder
 from .decoder import FPNDecoder, TaskGroupRefinement
 from .heads import create_all_heads
+from .sam2_encoder import SAM2Encoder
 
 logger = logging.getLogger(__name__)
 

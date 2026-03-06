@@ -6,22 +6,15 @@ with SAM2-based AI model → Visualize + Download Shapefiles.
 """
 
 import io
-import zipfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
+import rasterio
 import streamlit as st
 import torch
-import torch.nn.functional as F
-import rasterio
 from rasterio.io import MemoryFile
-from data.preprocessing import (
-    compute_tile_windows,
-    read_tile,
-    read_geotiff_meta,
-    compute_global_stretch,
-)
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 
@@ -138,8 +131,9 @@ def load_image(uploaded_file) -> tuple:
                 img = src.read(list(range(1, bands + 1)))
                 geo_meta = {"crs": src.crs, "transform": src.transform}
     else:
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         img_pil = Image.open(io.BytesIO(data)).convert("RGB")
         img = np.array(img_pil).transpose(2, 0, 1)

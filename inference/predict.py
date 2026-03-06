@@ -7,22 +7,14 @@ Gaussian weighting to produce seamless full-image predictions.
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from tqdm import tqdm
 
-from data.preprocessing import (
-    IMAGENET_MEAN,
-    IMAGENET_STD,
-    compute_tile_windows,
-    read_geotiff_meta,
-    read_tile,
-    compute_global_stretch,
-)
+from data.preprocessing import IMAGENET_MEAN, IMAGENET_STD
 
 logger = logging.getLogger(__name__)
 

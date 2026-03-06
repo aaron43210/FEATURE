@@ -2,10 +2,10 @@
 Per-task evaluation metrics: IoU, Dice/F1, pixel accuracy.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
-import torch
 import numpy as np
+import torch
 
 
 class TaskMetrics:

@@ -13,14 +13,8 @@ import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.features import shapes as rasterio_shapes
-from shapely.geometry import (
-    LineString,
-    MultiLineString,
-    MultiPolygon,
-    Point,
-    Polygon,
-    shape,
-)
+from shapely.geometry import (LineString, MultiLineString, MultiPolygon, Point,
+                              Polygon, shape)
 from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)

@@ -112,11 +112,11 @@ def main():
     args.name = re.sub(r"[^a-zA-Z0-9_\-]", "_", args.name)
 
     # Import here to avoid import-time errors
+    from data.dataset import create_dataloaders
+    from models.losses import MultiTaskLoss
+    from models.model import SvamitvaModel
     from training.config import TrainingConfig, get_quick_test_config
     from training.trainer import Trainer
-    from models.model import SvamitvaModel
-    from models.losses import MultiTaskLoss
-    from data.dataset import create_dataloaders
 
     # Configuration
     if args.quick_test:

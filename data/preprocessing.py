@@ -6,13 +6,14 @@ Line and point geometries are automatically buffered so they produce
 visible pixel masks.
 """
 
+import logging
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.warp import Resampling
-import geopandas as gpd
-from pathlib import Path
-from typing import Tuple, Dict, Optional
-import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
