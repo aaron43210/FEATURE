@@ -25,13 +25,19 @@ class TaskMetrics:
         self.fn = 0
         self.tn = 0
 
-    def update(self, logits: torch.Tensor, targets: torch.Tensor):
+    def update(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ):
         """
         Update with a batch of predictions.
 
         Args:
             logits: (B, 1, H, W) raw logits
             targets: (B, 1, H, W) or (B, H, W) binary targets
+            mask: (B, H, W) optional valid pixel mask
         """
         with torch.no_grad():
             preds = (torch.sigmoid(logits) > self.threshold).float()
@@ -41,10 +47,25 @@ class TaskMetrics:
                 targets = targets.squeeze(1)
             targets = targets.float()
 
-            self.tp += ((preds == 1) & (targets == 1)).sum().item()
-            self.fp += ((preds == 1) & (targets == 0)).sum().item()
-            self.fn += ((preds == 0) & (targets == 1)).sum().item()
-            self.tn += ((preds == 0) & (targets == 0)).sum().item()
+            if mask is not None:
+                if mask.ndim == 4:
+                    mask = mask.squeeze(1)
+                mask = mask > 0.5
+                # Apply mask to all components
+                t_tp = (preds == 1) & (targets == 1) & mask
+                t_fp = (preds == 1) & (targets == 0) & mask
+                t_fn = (preds == 0) & (targets == 1) & mask
+                t_tn = (preds == 0) & (targets == 0) & mask
+
+                self.tp += t_tp.sum().item()
+                self.fp += t_fp.sum().item()
+                self.fn += t_fn.sum().item()
+                self.tn += t_tn.sum().item()
+            else:
+                self.tp += ((preds == 1) & (targets == 1)).sum().item()
+                self.fp += ((preds == 1) & (targets == 0)).sum().item()
+                self.fn += ((preds == 0) & (targets == 1)).sum().item()
+                self.tn += ((preds == 0) & (targets == 0)).sum().item()
 
     @property
     def iou(self) -> float:
@@ -160,12 +181,21 @@ class MetricsTracker:
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
     ):
+        valid_mask = targets.get("valid_mask", None)
+
         for task in self.BINARY_TASKS:
             key = f"{task}_mask"
             if key in predictions and key in targets:
-                self.binary_metrics[task].update(predictions[key], targets[key])
+                self.binary_metrics[task].update(
+                    predictions[key], targets[key], mask=valid_mask
+                )
 
         if "roof_type_mask" in predictions and "roof_type_mask" in targets:
+            # RoofTypeMetrics already has an internal mask check for targets > 0
+            # which is essentially "onlyPixelsUnderShapefile".
+            # We add valid_mask to ensure NoData is also excluded.
+            # However, since RoofType target is 0 for background anyway,
+            # Targets > 0 already excludes background and NoData.
             self.roof_metrics.update(
                 predictions["roof_type_mask"], targets["roof_type_mask"]
             )

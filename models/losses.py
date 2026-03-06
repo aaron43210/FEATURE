@@ -24,15 +24,26 @@ class DiceLoss(nn.Module):
         super().__init__()
         self.smooth = smooth
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Args:
             logits: (B, 1, H, W) raw logits
             targets: (B, 1, H, W) binary targets
+            mask: (B, 1, H, W) optional valid pixel mask
         """
         probs = torch.sigmoid(logits)
         probs = probs.view(-1)
         targets = targets.float().view(-1)
+
+        if mask is not None:
+            mask = mask.view(-1)
+            probs = probs * mask
+            targets = targets * mask
 
         intersection = (probs * targets).sum()
         union = probs.sum() + targets.sum()
@@ -52,14 +63,26 @@ class BinaryFocalLoss(nn.Module):
         self.alpha = alpha
         self.gamma = gamma
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         bce = F.binary_cross_entropy_with_logits(
             logits, targets.float(), reduction="none"
         )
         probs = torch.sigmoid(logits)
         p_t = probs * targets + (1 - probs) * (1 - targets)
         focal_weight = self.alpha * (1.0 - p_t) ** self.gamma
-        return (focal_weight * bce).mean()
+
+        loss = focal_weight * bce
+        if mask is not None:
+            if mask.ndim == 3:
+                mask = mask.unsqueeze(1)
+            loss = loss * mask
+            return loss.sum() / (mask.sum() + 1e-7)
+        return loss.mean()
 
 
 # ── Lovász Hinge Loss ────────────────────────────────────────────────────────
@@ -83,9 +106,23 @@ class LovaszHingeLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         logits = logits.view(-1)
         targets = targets.float().view(-1)
+
+        if mask is not None:
+            mask = mask.view(-1)
+            # Only keep pixels where mask is 1
+            valid_idx = mask > 0.5
+            if not valid_idx.any():
+                return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            logits = logits[valid_idx]
+            targets = targets[valid_idx]
 
         signs = 2.0 * targets - 1.0
         errors = 1.0 - logits * signs
@@ -108,13 +145,23 @@ class BoundaryLoss(nn.Module):
         super().__init__()
         self.kernel_size = kernel_size
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         # Extract boundary via morphological gradient
         pad = self.kernel_size // 2
         t = targets.float()
         dilated = F.max_pool2d(t, self.kernel_size, stride=1, padding=pad)
         eroded = -F.max_pool2d(-t, self.kernel_size, stride=1, padding=pad)
         boundary = (dilated - eroded).clamp(0, 1)
+
+        if mask is not None:
+            if mask.ndim == 3:
+                mask = mask.unsqueeze(1)
+            boundary = boundary * mask
 
         # Compute boundary-weighted BCE
         if boundary.sum() < 1:
@@ -215,20 +262,36 @@ class MultiTaskLoss(nn.Module):
 
         self.boundary = BoundaryLoss()
 
-    def _binary_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Combined binary loss with boundary emphasis."""
+    def _binary_loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Combined binary loss with boundary emphasis and NoData masking."""
         if targets.ndim == 3:
             targets = targets.unsqueeze(1)
         targets = targets.float()
 
-        # Base losses
-        bce = self.bce(logits, targets)
-        dice = self.dice(logits, targets)
-        focal = self.focal(logits, targets)
+        if mask is not None and mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+
+        # Base losses (now with mask support)
+        # For simple BCE, we weigh it manually if mask is provided
+        if mask is not None:
+            bce_raw = F.binary_cross_entropy_with_logits(
+                logits, targets, reduction="none"
+            )
+            bce = (bce_raw * mask).sum() / (mask.sum() + 1e-7)
+        else:
+            bce = self.bce(logits, targets)
+
+        dice = self.dice(logits, targets, mask=mask)
+        focal = self.focal(logits, targets, mask=mask)
 
         # Edge-sharpening losses
-        lovasz = self.lovasz(logits, targets)
-        bdry = self.boundary(logits, targets)
+        lovasz = self.lovasz(logits, targets, mask=mask)
+        bdry = self.boundary(logits, targets, mask=mask)
 
         return bce + dice + 0.5 * focal + 1.0 * lovasz + 0.5 * bdry
 
@@ -237,26 +300,21 @@ class MultiTaskLoss(nn.Module):
         predictions: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """
-        Compute total multi-task loss.
-
-        Args:
-            predictions: dict of model outputs per task
-            targets: dict of ground truth masks per task
-
-        Returns:
-            total_loss: scalar
-            breakdown: dict of per-task loss values (for logging)
-        """
         device = next(iter(predictions.values())).device
         total = torch.zeros(1, device=device)
         breakdown = {}
+        valid_mask = targets.get("valid_mask", None)
 
         for task in BINARY_TASKS:
             pred_key = f"{task}_mask"
             if pred_key not in predictions or pred_key not in targets:
                 continue
-            loss = self._binary_loss(predictions[pred_key], targets[pred_key])
+
+            # Use NoData valid_mask to skip non-pixels
+            loss = self._binary_loss(
+                predictions[pred_key], targets[pred_key], mask=valid_mask
+            )
+
             if torch.isnan(loss) or torch.isinf(loss):
                 continue
             weighted = loss * self.weights.get(task, 1.0)
