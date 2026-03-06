@@ -8,7 +8,7 @@ Outputs dict of per-pixel predictions for all geographic features.
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 import torch.nn as nn

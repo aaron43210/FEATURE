@@ -7,7 +7,7 @@ as a multi-scale feature extractor producing 4 hierarchical feature maps.
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
 import torch
 import torch.nn as nn
@@ -78,7 +78,6 @@ class SAM2Encoder(nn.Module):
 
             # Extract the image encoder
             encoder = sam2_model.image_encoder
-            trunk = encoder.trunk
 
             # Infer feature channels by running a dummy forward
             channels = self._infer_channels(encoder)

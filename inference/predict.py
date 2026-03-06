@@ -7,14 +7,71 @@ Gaussian weighting to produce seamless full-image predictions.
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import rasterio
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from data.preprocessing import IMAGENET_MEAN, IMAGENET_STD
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
+def read_geotiff_meta(tif_path: Path) -> dict:
+    import rasterio
+
+    with rasterio.open(tif_path) as src:
+        return src.meta.copy()
+
+
+def compute_global_stretch(tif_path: Path) -> Optional[dict]:
+    import rasterio
+
+    p2, p98 = [], []
+    with rasterio.open(tif_path) as src:
+        for i in range(1, min(4, src.count + 1)):
+            data = src.read(i)
+            valid = data[data > 0]
+            if len(valid) > 0:
+                p2.append(np.percentile(valid, 2))
+                p98.append(np.percentile(valid, 98))
+            else:
+                p2.append(0.0)
+                p98.append(255.0)
+    return {"p2": np.array(p2), "p98": np.array(p98)}
+
+
+def compute_tile_windows(width: int, height: int, tile_size: int, overlap: int) -> list:
+    import rasterio
+
+    stride = tile_size - overlap
+    windows = []
+    for y in range(0, height, stride):
+        for x in range(0, width, stride):
+            t_w = min(tile_size, width - x)
+            t_h = min(tile_size, height - y)
+            windows.append(rasterio.windows.Window(x, y, t_w, t_h))
+    return windows
+
+
+def read_tile(
+    tif_path: Path, window: "rasterio.windows.Window", stretch_params: Optional[dict]
+) -> Tuple[np.ndarray, "rasterio.Affine"]:
+    import rasterio
+
+    with rasterio.open(tif_path) as src:
+        tile = src.read((1, 2, 3), window=window)
+        tile = np.transpose(tile, (1, 2, 0))
+
+        if stretch_params is not None:
+            p2 = stretch_params["p2"]
+            p98 = stretch_params["p98"]
+            tile = np.clip((tile - p2) / (p98 - p2) * 255.0, 0, 255).astype(np.uint8)
+
+        return tile, src.window_transform(window)
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +154,11 @@ class TiledPredictor:
         H, W = meta["height"], meta["width"]
         logger.info(f"Predicting {tif_path.name}: {W}×{H} px")
 
+        if selected_masks is None:
+            masks_to_predict = self.BINARY_MASKS + ["roof_type_mask"]
+        else:
+            masks_to_predict = selected_masks
+
         # Compute global stretch params for this map
         stretch = (
             compute_global_stretch(tif_path) if meta["dtype"] != np.uint8 else None
@@ -105,14 +167,14 @@ class TiledPredictor:
         # Nodata mask to zero-out predictions on black areas
         nodata_map = np.zeros((H, W), dtype=bool)
 
-        # Initialize logit accumulators (initialize with high negative for logit-space sum)
+        # Initialize logit accumulators (initialize with high negative for logit sums)
         # Binary tasks: logit(p/(1-p)) -> we add weighted logits
         logit_accum = {k: np.zeros((H, W), dtype=np.float32) for k in self.BINARY_MASKS}
 
         # Multi-class (roof type): we'll store (C, H, W) logits
         roof_logit_accum = (
             np.zeros((5, H, W), dtype=np.float32)
-            if "roof_type_mask" in selected_masks
+            if "roof_type_mask" in masks_to_predict
             else None
         )
 
@@ -143,7 +205,7 @@ class TiledPredictor:
             blend = self.blend_kernel[:th, :tw]
 
             # Accumulate logits
-            for key in selected_masks:
+            for key in masks_to_predict:
                 if key == "roof_type_mask" and roof_logit_accum is not None:
                     logits = preds["roof_type_mask"][:, :th, :tw]
                     roof_logit_accum[:, y : y + th, x : x + tw] += (
@@ -159,7 +221,7 @@ class TiledPredictor:
         weight_map = np.maximum(weight_map, 1e-8)
         results = {}
 
-        for key in selected_masks:
+        for key in masks_to_predict:
             if key == "roof_type_mask" and roof_logit_accum is not None:
                 for c in range(5):
                     roof_logit_accum[c] /= weight_map

@@ -13,9 +13,8 @@ Features:
 
 import json
 import logging
-import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import torch
 import torch.nn as nn
@@ -157,7 +156,8 @@ class CheckpointManager:
             best_path = self.save_dir / "best.pt"
             torch.save(state, best_path)
             logger.info(
-                f"★ New best model saved to best.pt (epoch {epoch}, {self.metric_name}={score:.4f})"
+                f"★ New best model saved to best.pt "
+                f"(epoch {epoch}, {self.metric_name}={score:.4f})"
             )
         else:
             self.epochs_no_improve += 1

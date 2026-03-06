@@ -13,9 +13,7 @@ import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.features import shapes as rasterio_shapes
-from shapely.geometry import (LineString, MultiLineString, MultiPolygon, Point,
-                              Polygon, shape)
-from shapely.ops import unary_union
+from shapely.geometry import LineString, Polygon, shape
 
 logger = logging.getLogger(__name__)
 
@@ -204,8 +202,8 @@ def export_predictions(
             mask,
             transform,
             threshold,
-            info["min_area"],
-            info["simplify"],
+            float(info["min_area"]),
+            float(info["simplify"]),
         )
 
         if not polygons:
@@ -213,7 +211,7 @@ def export_predictions(
             continue
 
         geometries = _convert_to_target_geom(
-            mask, polygons, info["geom_type"], transform
+            mask, polygons, str(info["geom_type"]), transform
         )
 
         if not geometries:

@@ -8,7 +8,7 @@ visible pixel masks.
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -117,7 +117,7 @@ class ShapefileAnnotationParser:
 
     # ── Buffer sizes (in map units, computed from pixel size in rasterize) ────
     # These are overridden per-call when we know the pixel size.
-    LINE_BUFFER_M: float = 2.0  # ~2.0 m buffer for lines (wider = stronger training signal)
+    LINE_BUFFER_M: float = 2.0  # ~2.0 m buffer for lines (wider = stronger signal)
     POINT_BUFFER_M: float = 3.0  # ~3.0 m buffer for points
 
     # Geometry types that need buffering
@@ -131,13 +131,39 @@ class ShapefileAnnotationParser:
 
     # Roof type lookup — covers common SVAMITVA naming variants
     ROOF_TYPES = {
-        "RCC": 1, "rcc": 1, "Rcc": 1, "R.C.C": 1, "R.C.C.": 1,
-        "Tiled": 2, "tiled": 2, "TILED": 2, "Tile": 2, "tile": 2,
-        "Tin": 3, "tin": 3, "TIN": 3, "GI Sheet": 3, "GI": 3,
-        "gi sheet": 3, "Sheet": 3, "AC Sheet": 3, "Asbestos": 3,
-        "Others": 4, "others": 4, "OTHERS": 4, "Other": 4, "other": 4,
-        "Mixed": 4, "Kutcha": 4, "Thatch": 4, "Thatched": 4,
-        "Unknown": 0, "unknown": 0, "": 0, "NA": 0, "None": 0,
+        "RCC": 1,
+        "rcc": 1,
+        "Rcc": 1,
+        "R.C.C": 1,
+        "R.C.C.": 1,
+        "Tiled": 2,
+        "tiled": 2,
+        "TILED": 2,
+        "Tile": 2,
+        "tile": 2,
+        "Tin": 3,
+        "tin": 3,
+        "TIN": 3,
+        "GI Sheet": 3,
+        "GI": 3,
+        "gi sheet": 3,
+        "Sheet": 3,
+        "AC Sheet": 3,
+        "Asbestos": 3,
+        "Others": 4,
+        "others": 4,
+        "OTHERS": 4,
+        "Other": 4,
+        "other": 4,
+        "Mixed": 4,
+        "Kutcha": 4,
+        "Thatch": 4,
+        "Thatched": 4,
+        "Unknown": 0,
+        "unknown": 0,
+        "": 0,
+        "NA": 0,
+        "None": 0,
     }
 
     def __init__(self):

@@ -91,7 +91,11 @@ def parse_args():
 
     # Misc
     p.add_argument("--checkpoint_dir", default="checkpoints")
-    p.add_argument("--resume", default=None, help="Resume from checkpoint")
+    p.add_argument(
+        "--resume",
+        default=None,
+        help="Path to DGX-style checkpoints dir (loads latest)",
+    )
     p.add_argument("--name", default="baseline", help="Experiment name")
     p.add_argument("--force_cpu", action="store_true")
     p.add_argument("--quick_test", action="store_true", help="3-epoch smoke test")

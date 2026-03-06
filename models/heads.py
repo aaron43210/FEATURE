@@ -8,7 +8,6 @@ Each head takes the FPN feature map and produces a per-pixel prediction:
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ConvBNReLU(nn.Module):
@@ -187,8 +186,8 @@ class PointHead(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         g = self.global_ctx(x).expand(-1, -1, H, W)
-        l = self.local(x)
-        return self.fuse(torch.cat([l, g], dim=1))
+        loc = self.local(x)
+        return self.fuse(torch.cat([loc, g], dim=1))
 
 
 # ── Head Registry ────────────────────────────────────────────────────────────
