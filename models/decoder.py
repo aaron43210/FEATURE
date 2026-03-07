@@ -198,8 +198,8 @@ class FPNDecoder(nn.Module):
 
 class TaskGroupRefinement(nn.Module):
     """
-    Shared refinement block for a group of related tasks.
-    E.g., all water-related tasks share one refinement.
+    Base refinement block for a group of related tasks.
+    Used for Footprint and Polygon groups.
     """
 
     def __init__(self, channels: int = 256):
@@ -218,3 +218,56 @@ class TaskGroupRefinement(nn.Module):
         out = self.refine(x)
         out = self.cbam(out + x)  # residual + attention
         return out
+
+
+class LinearRefinement(nn.Module):
+    """
+    Refinement block specialized for linear features (roads, utility lines).
+    Uses dilated convolutions to ensure continuity.
+    """
+
+    def __init__(self, channels: int = 256):
+        super().__init__()
+        self.pre = ConvBNReLU(channels, channels)
+        # Dilated parallel branches
+        self.d2 = nn.Conv2d(channels, channels // 2, 3, padding=2, dilation=2)
+        self.d4 = nn.Conv2d(channels, channels // 2, 3, padding=4, dilation=4)
+        self.post = nn.Sequential(
+            ConvBNReLU(channels, channels),
+            CBAM(channels),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.pre(x)
+        d2 = self.d2(x)
+        d4 = self.d4(x)
+        fused = torch.cat([d2, d4], dim=1)
+        return self.post(fused + x)
+
+
+class SparseRefinement(nn.Module):
+    """
+    Refinement block specialized for sparse point features.
+    Uses aggressive spatial attention.
+    """
+
+    def __init__(self, channels: int = 256):
+        super().__init__()
+        self.refine = nn.Sequential(
+            ConvBNReLU(channels, channels),
+            ConvBNReLU(channels, channels),
+        )
+        self.spatial = SpatialAttention(kernel_size=11)  # Larger window for context
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.refine(x)
+        return self.spatial(out + x)
+
+
+def ConvBNReLU(in_ch: int, out_ch: int, kernel: int = 3, padding: int = 1):
+    """Conv → BatchNorm → ReLU helper."""
+    return nn.Sequential(
+        nn.Conv2d(in_ch, out_ch, kernel, padding=padding, bias=False),
+        nn.BatchNorm2d(out_ch),
+        nn.ReLU(inplace=True),
+    )

@@ -102,7 +102,25 @@ class BuildingHead(nn.Module):
         return mask, roof
 
 
-# ── Line Feature Head (thin features: roads, railways, waterlines) ───────────
+# ── Line Feature Head (D-LinkNet Style) ──────────────────────────────────────
+
+
+class DLinkBlock(nn.Module):
+    """Dilated convolution block to expand receptive field for linear features."""
+
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.d1 = nn.Conv2d(in_ch, out_ch, 3, padding=1, dilation=1, bias=False)
+        self.d2 = nn.Conv2d(in_ch, out_ch, 3, padding=2, dilation=2, bias=False)
+        self.d4 = nn.Conv2d(in_ch, out_ch, 3, padding=4, dilation=4, bias=False)
+        self.d8 = nn.Conv2d(in_ch, out_ch, 3, padding=8, dilation=8, bias=False)
+        self.fuse = nn.Sequential(
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fuse(self.d1(x) + self.d2(x) + self.d4(x) + self.d8(x))
 
 
 class LineHead(nn.Module):
@@ -119,26 +137,11 @@ class LineHead(nn.Module):
     ):
         super().__init__()
         self.project = nn.Conv2d(in_channels, mid_channels, 1)
+        self.dlink = DLinkBlock(in_channels, mid_channels)
         self.refine = nn.Sequential(
-            ConvBNReLU(in_channels, mid_channels),
-            nn.Conv2d(
-                mid_channels,
-                mid_channels,
-                3,
-                padding=2,
-                dilation=2,
-                bias=False,
-            ),
-            nn.BatchNorm2d(mid_channels),
-            nn.ReLU(inplace=True),
             nn.Dropout2d(dropout),
-            nn.Conv2d(
-                mid_channels,
-                mid_channels,
-                3,
-                padding=1,
-                bias=False,
-            ),
+            ConvBNReLU(mid_channels, mid_channels),
+            nn.Conv2d(mid_channels, mid_channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(mid_channels),
             nn.ReLU(inplace=True),
         )
@@ -146,11 +149,42 @@ class LineHead(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         skip = self.project(x)
-        out = self.refine(x)
-        return self.out(out + skip)  # residual
+        out = self.dlink(x)
+        return self.out(self.refine(out) + skip)
 
 
-# ── Point Feature Head (sparse features: wells, water points) ────────────────
+# ── Detection Head (Detection-style features for sparse objects) ─────────────
+
+
+class DetectionHead(nn.Module):
+    """
+    Head optimized for detection-like sparse objects (wells, transformers).
+    Combines centripetal-shift style features with segmentation.
+    """
+
+    def __init__(
+        self, in_channels: int = 256, mid_channels: int = 64, dropout: float = 0.1
+    ):
+        super().__init__()
+        self.stem = ConvBNReLU(in_channels, mid_channels)
+        # Multi-scale aggregation
+        self.p3 = nn.Conv2d(mid_channels, mid_channels, 3, padding=1)
+        self.p5 = nn.Conv2d(mid_channels, mid_channels, 5, padding=2)
+
+        self.fuse = nn.Sequential(
+            ConvBNReLU(mid_channels * 2, mid_channels),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(mid_channels, 1, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        p3 = self.p3(x)
+        p5 = self.p5(x)
+        return self.fuse(torch.cat([p3, p5], dim=1))
+
+
+# ── Point Feature Head (Legacy support) ──────────────────────────────────────
 
 
 class PointHead(nn.Module):
@@ -212,7 +246,6 @@ def create_all_heads(
     # Polygon heads
     heads["road"] = BinaryHead(in_channels, 64, dropout)
     heads["waterbody"] = BinaryHead(in_channels, 64, dropout)
-    heads["utility_point"] = BinaryHead(in_channels, 64, dropout)
     heads["bridge"] = BinaryHead(in_channels, 64, dropout)
 
     # Line heads
@@ -221,7 +254,8 @@ def create_all_heads(
     heads["utility_line"] = LineHead(in_channels, 64, dropout)
     heads["railway"] = LineHead(in_channels, 64, dropout)
 
-    # Point heads
-    heads["waterbody_point"] = PointHead(in_channels, 64, dropout)
+    # Point/Small Object heads (using DetectionHead for better IoU)
+    heads["waterbody_point"] = DetectionHead(in_channels, 64, dropout)
+    heads["utility_point"] = DetectionHead(in_channels, 64, dropout)
 
     return heads

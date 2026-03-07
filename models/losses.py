@@ -265,8 +265,12 @@ class MultiTaskLoss(nn.Module):
         logits: torch.Tensor,
         targets: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        ohem_ratio: float = 0.7,
     ) -> torch.Tensor:
-        """Combined binary loss with boundary emphasis and NoData masking."""
+        """
+        Combined binary loss with boundary emphasis, NoData masking,
+        and Online Hard Example Mining (OHEM).
+        """
         if targets.ndim == 3:
             targets = targets.unsqueeze(1)
         targets = targets.float()
@@ -274,26 +278,39 @@ class MultiTaskLoss(nn.Module):
         if mask is not None and mask.ndim == 3:
             mask = mask.unsqueeze(1)
 
-        # Base losses (now with mask support)
-        # For simple BCE, we weigh it manually if mask is provided
+        # 1. Base BCE Loss
         if mask is not None:
             bce_raw = F.binary_cross_entropy_with_logits(
                 logits, targets, reduction="none"
             )
-            bce = (bce_raw * mask).sum() / (mask.sum() + 1e-7)
+            bce_masked = bce_raw * mask
+
+            num_pixels = mask.sum().int().item()
+            # OHEM: Only take the top N% hardest pixels
+            if ohem_ratio < 1.0:
+                if num_pixels > 100:
+                    num_hard = int(num_pixels * ohem_ratio)
+                    # We can't easily sort everything, so we use a threshold
+                    # Sort only valid pixels
+                    valid_logits = bce_masked[mask > 0.5]
+                    hard_threshold = torch.topk(valid_logits, num_hard).values[-1]
+                    ohem_mask = (bce_masked >= hard_threshold).float() * mask
+                    bce = bce_masked[ohem_mask > 0.5].mean()
+                else:
+                    bce = bce_masked.sum() / (num_pixels + 1e-7)
+            else:
+                bce = bce_masked.sum() / (num_pixels + 1e-7)
         else:
             bce = self.bce(logits, targets)
 
+        # 2. Geometry-aware losses
         dice = self.dice(logits, targets, mask=mask)
         focal = self.focal(logits, targets, mask=mask)
-
-        # Edge-sharpening losses
         lovasz = self.lovasz(logits, targets, mask=mask)
         bdry = self.boundary(logits, targets, mask=mask)
 
-        # Balanced sub-loss coefficients for a stable start
-        # BCE and Dice are the primary signal, Lovasz and Boundary refine edges.
-        return 1.0 * bce + 1.0 * dice + 0.2 * focal + 0.5 * lovasz + 0.2 * bdry
+        # Weights tuned for >95% IoU (emphasizing IoU/Lovasz and Boundary)
+        return 0.8 * bce + 1.2 * dice + 0.3 * focal + 1.2 * lovasz + 0.5 * bdry
 
     def forward(
         self,

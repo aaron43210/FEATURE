@@ -2,42 +2,56 @@
 __pycache__/
 *.py[cod]
 *$py.class
-.venv/
+*.so
+.Python
+env/
 build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
 
-# Deep Learning / Data (CRITICAL)
-## checkpoints/ removed to allow pushing model checkpoints
-outputs/
-data/
-tmp/
+# Data & Models
+data/MAP*/
+!data/README.md
+checkpoints/
 *.pt
 *.pth
-*.h5
 *.weights
+*.h5
+results/
+temp/
 
-# GIS / Spatial
-*.shp.xml
-*.cpg
+# GIS & Outputs
+*.tif
+*.ecw
+*.shp
 *.shx
 *.dbf
 *.prj
-# Ignoring raw data mostly, but keeping config if needed.
-# Typically we don't push large GeoTIFFs
-*.tif
-*.tiff
-*.jpg
-*.png
+*.cpg
+*.gpkg
+*.qgz
+*.qmd
 
-# IDE / System
-.DS_Store
-.idea/
+# IDEs
 .vscode/
-.gemini/
-brain/
-*.log
+.idea/
+*.swp
+*.swo
+.DS_Store
 
-# Streamlit
-## .streamlit/ removed to allow pushing Streamlit config
-static/
+# Logs
+logs/
+*.log
+runs/

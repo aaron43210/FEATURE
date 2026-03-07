@@ -127,7 +127,7 @@ class ShapefileAnnotationParser:
         "waterbody_line",
         "railway",
     }
-    POINT_TASKS = {"waterbody_point"}
+    POINT_TASKS = {"waterbody_point", "utility_point"}
 
     # Roof type lookup — covers common SVAMITVA naming variants
     ROOF_TYPES = {

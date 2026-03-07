@@ -15,3 +15,11 @@ albumentations
 scipy
 opencv-python
 scikit-learn
+rio-tiler
+dask[complete]
+distributed
+networkx
+skan
+segmentation-models-pytorch
+ultralytics
+timm

@@ -1,313 +1,245 @@
 """
-Mask → Shapefile/GeoJSON export module.
+Mask & Detection → GIS Vector (GeoPackage) export module.
 
-Converts model prediction masks into vectorized geographic features
-with proper CRS, attributes, and geometry types.
+V3 Improvements:
+- Integrated YOLOv8 detection box to GIS point conversion.
+- Consolidated feature mapping for ensemble outputs.
+- Robust geometry cleaning and attribute assignment.
 """
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.features import shapes as rasterio_shapes
-from shapely.geometry import LineString, Polygon, shape
+from shapely.geometry import Point, Polygon, MultiPolygon, shape
 
 logger = logging.getLogger(__name__)
 
-# Roof-type class labels
+# GIS Attribute Labels
 ROOF_LABELS = ["Background", "RCC", "Tiled", "Tin", "Others"]
 
-# Feature metadata
-FEATURE_INFO = {
+# Feature Optimization Settings
+FEATURE_CONFIG: Dict[str, Dict[str, Any]] = {
     "building_mask": {
         "name": "Buildings",
-        "geom_type": "Polygon",
-        "min_area": 25,
-        "simplify": 1.5,
+        "type": "Polygon",
+        "min_area": 15,
+        "simplify": 0.5,
     },
-    "road_mask": {
-        "name": "Roads",
-        "geom_type": "Polygon",
-        "min_area": 50,
-        "simplify": 2.0,
-    },
+    "road_mask": {"name": "Roads", "type": "Polygon", "min_area": 30, "simplify": 0.8},
     "road_centerline_mask": {
-        "name": "Road_Centrelines",
-        "geom_type": "LineString",
-        "min_area": 10,
-        "simplify": 1.0,
+        "name": "Road_Centerlines",
+        "type": "LineString",
+        "min_length": 5,
+        "simplify": 0.5,
     },
     "waterbody_mask": {
         "name": "Waterbodies",
-        "geom_type": "Polygon",
-        "min_area": 30,
-        "simplify": 1.5,
+        "type": "Polygon",
+        "min_area": 25,
+        "simplify": 1.0,
     },
     "waterbody_line_mask": {
         "name": "Waterbody_Lines",
-        "geom_type": "LineString",
-        "min_area": 10,
-        "simplify": 1.0,
+        "type": "LineString",
+        "min_length": 5,
+        "simplify": 0.5,
     },
-    "waterbody_point_mask": {
-        "name": "Waterbody_Points",
-        "geom_type": "Point",
-        "min_area": 5,
-        "simplify": 0,
-    },
+    "waterbody_point_mask": {"name": "Wells", "type": "Point"},
     "utility_line_mask": {
         "name": "Utility_Lines",
-        "geom_type": "LineString",
-        "min_area": 10,
-        "simplify": 1.0,
+        "type": "LineString",
+        "min_length": 5,
+        "simplify": 0.5,
     },
-    "utility_point_mask": {
-        "name": "Utility_Points",
-        "geom_type": "Point",
-        "min_area": 5,
-        "simplify": 0,
-    },
+    "utility_point_mask": {"name": "Utility_Points", "type": "Point"},
     "bridge_mask": {
         "name": "Bridges",
-        "geom_type": "Polygon",
+        "type": "Polygon",
         "min_area": 20,
-        "simplify": 1.5,
+        "simplify": 0.5,
     },
     "railway_mask": {
         "name": "Railways",
-        "geom_type": "LineString",
-        "min_area": 10,
+        "type": "LineString",
+        "min_length": 10,
         "simplify": 1.0,
     },
 }
 
+# YOLO Class Mapping
+YOLO_CLASS_INFO = {
+    0: {"name": "Wells", "key": "waterbody_point_mask"},
+    1: {"name": "Transformers", "key": "utility_point_mask"},
+    2: {"name": "Tanks", "key": "utility_point_mask"},
+}
 
-def _mask_to_polygons(
+
+def _mask_to_geometries(
     mask: np.ndarray,
-    transform,
+    transform: rasterio.Affine,
     threshold: float = 0.5,
-    min_area: float = 25,
-    simplify_tol: float = 1.5,
-) -> List[Polygon]:
-    """Convert a probability mask to simplified polygons."""
-    binary = (mask > threshold).astype(np.uint8)
-
-    if binary.sum() == 0:
-        return []
-
-    polygons = []
-    for geom, value in rasterio_shapes(binary, mask=binary > 0, transform=transform):
-        if value == 0:
-            continue
-        poly = shape(geom)
-        if poly.area < min_area:
-            continue
-        if simplify_tol > 0:
-            poly = poly.simplify(simplify_tol, preserve_topology=True)
-        if not poly.is_empty and poly.is_valid:
-            polygons.append(poly)
-
-    return polygons
-
-
-def _mask_to_skeleton_lines(
-    mask: np.ndarray, transform, threshold: float = 0.5
-) -> List[LineString]:
-    """Extract thin lines using skeletonization."""
-    try:
-        from skimage.morphology import skeletonize
-    except ImportError:
-        logger.warning("skimage not installed, falling back to polygon boundaries")
-        return []
-
-    binary = (mask > threshold).astype(np.uint8)
-    if binary.sum() == 0:
-        return []
-
-    skeleton = skeletonize(binary)
-    lines = []
-    for geom, value in rasterio_shapes(
-        skeleton.astype(np.uint8),
-        mask=skeleton > 0,
-        transform=transform,
-    ):
-        if value > 0:
-            ls = shape(geom)
-            if not ls.is_empty:
-                lines.append(ls)
-    return lines
-
-
-def _convert_to_target_geom(
-    mask: np.ndarray,
-    polygons: List[Polygon],
-    target_type: str,
-    transform,
+    geom_type: str = "Polygon",
+    min_val: float = 20.0,
+    simplify_tol: float = 0.5,
 ) -> list:
-    """Convert polygons to target geometry type."""
-    if target_type == "Polygon":
-        return polygons
-    elif target_type == "LineString":
-        return _mask_to_skeleton_lines(mask, transform)
-    elif target_type == "Point":
-        return [p.centroid for p in polygons if not p.is_empty]
-    return polygons
+    """Convert mask to cleaned shapely geometries."""
+    binary = (mask > threshold).astype(np.uint8)
+    if binary.sum() == 0:
+        return []
+
+    if geom_type == "LineString":
+        from skimage.morphology import skeletonize
+
+        skeleton = skeletonize(binary)
+        shapes = list(
+            rasterio_shapes(
+                skeleton.astype(np.uint8), mask=skeleton > 0, transform=transform
+            )
+        )
+        geoms = [shape(g) for g, v in shapes if v > 0]
+        return [g for g in geoms if g.length > min_val]
+
+    elif geom_type == "Polygon":
+        shapes = list(rasterio_shapes(binary, mask=binary > 0, transform=transform))
+        geoms = []
+        for g, v in shapes:
+            poly = shape(g)
+            if poly.area < min_val:
+                continue
+            if simplify_tol > 0:
+                poly = poly.simplify(simplify_tol, preserve_topology=True)
+            if not poly.is_empty and poly.is_valid:
+                geoms.append(poly)
+        return geoms
+
+    elif geom_type == "Point":
+        from skimage.measure import label, regionprops
+
+        labels = label(binary)
+        return [
+            Point(transform * (prop.centroid[1], prop.centroid[0]))
+            for prop in regionprops(labels)
+        ]
+
+    return []
 
 
-# ── Main Export Functions ─────────────────────────────────────────────────────
+class GISExporter:
+    """Production exporter for ensemble V3 predictions."""
+
+    def __init__(self, output_dir: Path, crs: Any):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.crs = crs
+
+    def export(
+        self,
+        results: Dict[str, Any],
+        roof_mask: Optional[np.ndarray] = None,
+        transform: Optional[rasterio.Affine] = None,
+    ) -> Dict[str, Path]:
+        """Main export loop handling both segmentation and detection."""
+        exported_paths = {}
+        if transform is None:
+            logger.error("Transform is required for export.")
+            return {}
+
+        # 1. Process Segmentation Masks
+        for key, config in FEATURE_CONFIG.items():
+            if key not in results or not isinstance(results[key], np.ndarray):
+                continue
+
+            logger.info(f"Vectorizing {config['name']}...")
+            mask = results[key]
+
+            geoms = _mask_to_geometries(
+                mask,
+                transform,
+                geom_type=str(config["type"]),
+                min_val=float(config.get("min_area", config.get("min_length", 0))),
+                simplify_tol=float(config.get("simplify", 0)),
+            )
+
+            if geoms:
+                exported_paths[key] = self._write_gpkg(
+                    geoms, config["name"], key, transform, roof_mask
+                )
+
+        # 2. Process YOLO Detections
+        if "detections" in results:
+            logger.info("Processing YOLOv8 detections...")
+            det_by_key: Dict[str, List[Point]] = {}
+            for det in results["detections"]:
+                info = YOLO_CLASS_INFO.get(det["class"])
+                if info:
+                    key = info["key"]
+                    if key not in det_by_key:
+                        det_by_key[key] = []
+
+                    x1, y1, x2, y2 = det["box"]
+                    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                    world_pt = Point(transform * (cx, cy))
+                    det_by_key[key].append(world_pt)
+
+            for key, points in det_by_key.items():
+                name = FEATURE_CONFIG[key]["name"]
+                exported_paths[f"det_{key}"] = self._write_gpkg(
+                    points, name, key, transform
+                )
+
+        return exported_paths
+
+    def _write_gpkg(
+        self,
+        geoms: list,
+        name: str,
+        key: str,
+        transform: rasterio.Affine,
+        roof_mask: Optional[np.ndarray] = None,
+    ) -> Path:
+        """Helper to write GDF to GeoPackage."""
+        records = []
+        for i, g in enumerate(geoms):
+            # Polygon orientation/topology cleaning
+            if isinstance(g, (Polygon, MultiPolygon)) and not g.is_valid:
+                g = g.buffer(0)
+
+            data = {"geometry": g, "id": i, "class": name}
+
+            # Roof Attribute logic (Specific to buildings)
+            if key == "building_mask" and roof_mask is not None:
+                cp = g.representative_point()
+                inv_transform = ~transform
+                px, py = inv_transform * (cp.x, cp.y)
+                r, c = int(py), int(px)
+                if 0 <= r < roof_mask.shape[0] and 0 <= c < roof_mask.shape[1]:
+                    idx = int(roof_mask[r, c])
+                    data["roof_type"] = ROOF_LABELS[min(idx, 4)]
+
+            records.append(data)
+
+        gdf = gpd.GeoDataFrame(records, crs=self.crs)
+        out_path = self.output_dir / f"{name}.gpkg"
+        gdf.to_file(out_path, driver="GPKG")
+        logger.info(f"  Saved {len(gdf)} features to {out_path.name}")
+        return out_path
 
 
 def export_predictions(
-    predictions: Dict[str, np.ndarray],
+    results: Dict[str, Any],
     tif_path: Path,
     output_dir: Path,
     threshold: float = 0.5,
     roof_type_mask: Optional[np.ndarray] = None,
-    format: str = "both",
 ) -> Dict[str, Path]:
-    """
-    Export model predictions as Shapefiles and/or GeoJSON.
-
-    Args:
-        predictions: dict of mask_key -> (H, W) float32 maps
-        tif_path: source orthophoto for CRS and transform
-        output_dir: directory to write outputs
-        threshold: binarization threshold
-        roof_type_mask: optional (H, W) uint8 roof class indices
-        format: 'shapefile', 'geojson', or 'both'
-
-    Returns:
-        Dict of mask_key -> output file path
-    """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
+    """Compatibility wrapper."""
     with rasterio.open(tif_path) as src:
-        transform = src.transform
-        crs = src.crs
-
-    exported = {}
-
-    for mask_key, mask in predictions.items():
-        if mask_key not in FEATURE_INFO:
-            continue
-
-        info = FEATURE_INFO[mask_key]
-        logger.info(f"Exporting {info['name']}...")
-
-        polygons = _mask_to_polygons(
-            mask,
-            transform,
-            threshold,
-            float(info["min_area"]),  # type: ignore
-            float(info["simplify"]),  # type: ignore
+        exporter = GISExporter(output_dir, src.crs)
+        return exporter.export(
+            results, roof_mask=roof_type_mask, transform=src.transform
         )
-
-        if not polygons:
-            logger.info(f"  {info['name']}: no features detected")
-            continue
-
-        geometries = _convert_to_target_geom(
-            mask, polygons, str(info["geom_type"]), transform
-        )
-
-        if not geometries:
-            continue
-
-        records = []
-        for i, geom in enumerate(geometries):
-            record = {
-                "geometry": geom,
-                "FID": i + 1,
-                "Feature": info["name"],
-                "Area_sqm": geom.area if hasattr(geom, "area") else 0,
-            }
-
-            if mask_key == "building_mask" and roof_type_mask is not None:
-                # Use representative_point() instead of centroid to guarantee the point
-                # is INSIDE the building (crucial for L-shaped/concave buildings)
-                point = geom.representative_point()
-                cx, cy = point.coords[0]
-                col, row = ~transform * (cx, cy)
-                row, col = int(row), int(col)
-
-                if (
-                    0 <= row < roof_type_mask.shape[0]
-                    and 0 <= col < roof_type_mask.shape[1]
-                ):
-                    rt_idx = int(roof_type_mask[row, col])
-                    record["Roof_Type"] = ROOF_LABELS[min(rt_idx, 4)]
-                else:
-                    record["Roof_Type"] = "Unknown"
-
-            # Finite boundaries: clean topology
-            if not geom.is_valid:
-                geom = geom.buffer(0)
-                record["geometry"] = geom
-
-            records.append(record)
-
-        gdf = gpd.GeoDataFrame(records, crs=crs)
-
-        base_name = info["name"]
-        if format in ("shapefile", "both"):
-            shp_path = output_dir / f"{base_name}.shp"
-            gdf.to_file(shp_path, driver="ESRI Shapefile")
-            exported[mask_key] = shp_path
-            logger.info(f"  -> {shp_path.name} ({len(gdf)} features)")
-
-        if format in ("geojson", "both"):
-            json_path = output_dir / f"{base_name}.geojson"
-            gdf.to_file(json_path, driver="GeoJSON")
-            if mask_key not in exported:
-                exported[mask_key] = json_path
-            logger.info(f"  -> {json_path.name} ({len(gdf)} features)")
-
-    return exported
-
-
-def create_overlay_image(
-    image: np.ndarray,
-    predictions: Dict[str, np.ndarray],
-    threshold: float = 0.5,
-    alpha: float = 0.4,
-) -> np.ndarray:
-    """Create a visualization overlay of predictions on the image."""
-    COLORS = {
-        "building_mask": (255, 100, 50),
-        "road_mask": (255, 255, 100),
-        "road_centerline_mask": (200, 200, 60),
-        "waterbody_mask": (50, 150, 255),
-        "waterbody_line_mask": (80, 180, 255),
-        "waterbody_point_mask": (100, 200, 255),
-        "utility_line_mask": (50, 220, 100),
-        "utility_point_mask": (100, 255, 150),
-        "bridge_mask": (220, 130, 50),
-        "railway_mask": (180, 80, 255),
-    }
-
-    composite = image.copy()
-
-    for mask_key, mask in predictions.items():
-        if mask_key not in COLORS:
-            continue
-        color = COLORS[mask_key]
-        binary = mask > threshold
-        if binary.sum() == 0:
-            continue
-
-        overlay = np.zeros_like(composite)
-        for c in range(3):
-            overlay[:, :, c] = color[c]
-
-        mask_3d = np.stack([binary] * 3, axis=-1)
-        composite = np.where(
-            mask_3d,
-            (composite * (1 - alpha) + overlay * alpha).astype(np.uint8),
-            composite,
-        )
-
-    return composite

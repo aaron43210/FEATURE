@@ -1,82 +1,38 @@
 """
-Tiled inference engine for large GeoTIFF orthophotos.
+High-performance Multi-Model Ensemble Inference Engine.
 
-Runs the model on overlapping tiles and blends results with
-Gaussian weighting to produce seamless full-image predictions.
+Orchestrates:
+- Specialized SOTA Segmentation (DeepLabV3+, DLinkNet, etc.)
+- YOLOv8 Object Detection (Wells, Transformers, Tanks)
+- EfficientNet Roof Classification
+- Sequential execution for VRAM optimization
 """
 
 import logging
+import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Any
 
 import numpy as np
-import rasterio
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+try:
+    from rio_tiler.io import Reader
+except ImportError:
+    warnings.warn("rio-tiler not installed.")
 
-
-def read_geotiff_meta(tif_path: Path) -> dict:
-    import rasterio
-
-    with rasterio.open(tif_path) as src:
-        return src.meta.copy()
-
-
-def compute_global_stretch(tif_path: Path) -> Optional[dict]:
-    import rasterio
-
-    p2, p98 = [], []
-    with rasterio.open(tif_path) as src:
-        for i in range(1, min(4, src.count + 1)):
-            data = src.read(i)
-            valid = data[data > 0]
-            if len(valid) > 0:
-                p2.append(np.percentile(valid, 2))
-                p98.append(np.percentile(valid, 98))
-            else:
-                p2.append(0.0)
-                p98.append(255.0)
-    return {"p2": np.array(p2), "p98": np.array(p98)}
-
-
-def compute_tile_windows(width: int, height: int, tile_size: int, overlap: int) -> list:
-    import rasterio
-
-    stride = tile_size - overlap
-    windows = []
-    for y in range(0, height, stride):
-        for x in range(0, width, stride):
-            t_w = min(tile_size, width - x)
-            t_h = min(tile_size, height - y)
-            windows.append(rasterio.windows.Window(x, y, t_w, t_h))
-    return windows
-
-
-def read_tile(
-    tif_path: Path, window: "rasterio.windows.Window", stretch_params: Optional[dict]
-) -> Tuple[np.ndarray, "rasterio.Affine"]:
-    import rasterio
-
-    with rasterio.open(tif_path) as src:
-        tile = src.read((1, 2, 3), window=window)
-        tile = np.transpose(tile, (1, 2, 0))
-
-        if stretch_params is not None:
-            p2 = stretch_params["p2"]
-            p98 = stretch_params["p98"]
-            tile = np.clip((tile - p2) / (p98 - p2) * 255.0, 0, 255).astype(np.uint8)
-
-        return tile, src.window_transform(window)
-
+try:
+    from ultralytics import YOLO
+except ImportError:
+    warnings.warn("ultralytics not installed. YOLOv8 features will be disabled.")
+    YOLO = None
 
 logger = logging.getLogger(__name__)
 
-
-# ── Gaussian Blending Weights ─────────────────────────────────────────────────
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 def _gaussian_kernel_2d(size: int, sigma: float = 0.0) -> np.ndarray:
@@ -89,40 +45,28 @@ def _gaussian_kernel_2d(size: int, sigma: float = 0.0) -> np.ndarray:
     return kernel_2d / kernel_2d.max()
 
 
-# ── Predictor ─────────────────────────────────────────────────────────────────
-
-
 class TiledPredictor:
     """
-    Run inference on full-size orthophotos using overlapping tiles.
-
-    Args:
-        model: trained SvamitvaModel
-        device: cuda/mps/cpu
-        tile_size: tile dimension (must match training)
-        overlap: tile overlap in pixels
-        threshold: sigmoid threshold for binary masks
+    Ensemble inference engine for SVAMITVA V3 Architecture.
     """
 
-    BINARY_MASKS = [
-        "building_mask",
-        "road_mask",
-        "road_centerline_mask",
-        "waterbody_mask",
-        "waterbody_line_mask",
-        "waterbody_point_mask",
-        "utility_line_mask",
-        "utility_point_mask",
-        "bridge_mask",
-        "railway_mask",
-    ]
+    SEGMENTATION_TASKS = {
+        "building_mask": "buildings",
+        "road_mask": "roads",
+        "waterbody_mask": "water",
+        "utility_line_mask": "utilities",
+        "railway_mask": "railway",
+    }
+
+    DETECTION_TASKS = ["waterbody_point_mask", "utility_point_mask"]
 
     def __init__(
         self,
         model: nn.Module,
+        yolo_path: Optional[str] = None,
         device: torch.device = torch.device("cpu"),
         tile_size: int = 512,
-        overlap: int = 64,
+        overlap: int = 128,
         threshold: float = 0.5,
     ):
         self.model = model.to(device).eval()
@@ -131,272 +75,166 @@ class TiledPredictor:
         self.overlap = overlap
         self.threshold = threshold
 
-        # Pre-compute blending kernel
+        self.yolo = None
+        if yolo_path and YOLO:
+            self.yolo = YOLO(yolo_path)
+            self.yolo.to(device)
+
         self.blend_kernel = _gaussian_kernel_2d(tile_size).astype(np.float32)
+
+    def _get_valid_mask(self, tif_path: Path) -> np.ndarray:
+        """Build a coarse valid-data mask from thumbnail."""
+        try:
+            with Reader(str(tif_path)) as dst:
+                thumb = dst.preview(max_size=1024)
+                mask = np.any(thumb.data > 0, axis=0)
+                return mask
+        except Exception as e:
+            logger.warning(f"Thumbnail scan failed: {e}")
+            return np.ones((1, 1), dtype=bool)
 
     @torch.no_grad()
     def predict_tif(
         self,
         tif_path: Path,
         selected_masks: Optional[List[str]] = None,
-    ) -> Dict[str, np.ndarray]:
-        """
-        Run tiled inference on a full GeoTIFF.
+    ) -> Dict[str, Any]:
+        """Run ensemble inference on a full GeoTIFF."""
+        with Reader(str(tif_path)) as dst:
+            H, W = dst.dataset.height, dst.dataset.width
 
-        Args:
-            tif_path: path to input GeoTIFF
-            selected_masks: optional subset of mask keys to predict
+        logger.info(f"Predicting {tif_path.name} with Ensemble V3: {W}x{H} px")
+        masks_to_predict = selected_masks or list(self.SEGMENTATION_TASKS.keys())
 
-        Returns:
-            Dict of mask_key → (H, W) float32 probability maps
-        """
-        meta = read_geotiff_meta(tif_path)
-        H, W = meta["height"], meta["width"]
-        logger.info(f"Predicting {tif_path.name}: {W}×{H} px")
+        valid_thumb = self._get_valid_mask(tif_path)
+        th_h, th_w = valid_thumb.shape
+        scale_y, scale_x = th_h / H, th_w / W
 
-        if selected_masks is None:
-            masks_to_predict = self.BINARY_MASKS + ["roof_type_mask"]
-        else:
-            masks_to_predict = selected_masks
+        accumulators = {
+            k: np.zeros((H, W), dtype=np.float32)
+            for k in masks_to_predict
+            if k in self.SEGMENTATION_TASKS
+        }
 
-        # Compute global stretch params for this map
-        stretch = (
-            compute_global_stretch(tif_path) if meta["dtype"] != np.uint8 else None
-        )
-
-        # Nodata mask to zero-out predictions on black areas
-        nodata_map = np.zeros((H, W), dtype=bool)
-
-        # Initialize logit accumulators (initialize with high negative for logit sums)
-        # Binary tasks: logit(p/(1-p)) -> we add weighted logits
-        logit_accum = {k: np.zeros((H, W), dtype=np.float32) for k in self.BINARY_MASKS}
-
-        # Multi-class (roof type): we'll store (C, H, W) logits
-        roof_logit_accum = (
-            np.zeros((5, H, W), dtype=np.float32)
-            if "roof_type_mask" in masks_to_predict
-            else None
-        )
-
+        detections = []
         weight_map = np.zeros((H, W), dtype=np.float32)
 
-        # Compute tile windows
-        windows = compute_tile_windows(W, H, self.tile_size, self.overlap)
-        logger.info(f"  Processing {len(windows)} tiles...")
+        stride = self.tile_size - self.overlap
+        windows = []
+        for y in range(0, H, stride):
+            for x in range(0, W, stride):
+                tw = min(self.tile_size, W - x)
+                th = min(self.tile_size, H - y)
+                tx, ty = int(x * scale_x), int(y * scale_y)
+                if not valid_thumb[min(ty, th_h - 1), min(tx, th_w - 1)]:
+                    continue
+                windows.append((x, y, tw, th))
 
-        for win in tqdm(windows, desc="Inference", dynamic_ncols=True):
-            tile_img, _ = read_tile(tif_path, win, stretch_params=stretch)
-            th, tw = tile_img.shape[:2]
+        for x0, y0, tw_act, th_act in tqdm(windows, desc="Ensemble Inference"):
+            with Reader(str(tif_path)) as src:
+                part_data = src.part(
+                    (x0, y0, x0 + self.tile_size, y0 + self.tile_size),
+                    width=self.tile_size,
+                    height=self.tile_size,
+                    padding=True,
+                ).data
 
-            # Update nodata map
-            y, x = int(win.row_off), int(win.col_off)
-            nodata_map[y : y + th, x : x + tw] |= tile_img.sum(axis=-1) == 0
+            tile_img = np.transpose(part_data, (1, 2, 0))
+            blend = self.blend_kernel[:th_act, :tw_act]
+            weight_map[y0 : y0 + th_act, x0 : x0 + tw_act] += blend
 
-            # Pad if needed
-            if th < self.tile_size or tw < self.tile_size:
-                padded = np.zeros((self.tile_size, self.tile_size, 3), dtype=np.uint8)
-                padded[:th, :tw] = tile_img
-                tile_img = padded
-
-            # Run model - returns RAW LOGITS (no sigmoid/softmax)
-            preds = self._predict_single_tile(tile_img, return_logits=True)
-
-            # Blending
-            blend = self.blend_kernel[:th, :tw]
-
-            # Accumulate logits
-            for key in masks_to_predict:
-                if key == "roof_type_mask" and roof_logit_accum is not None:
-                    logits = preds["roof_type_mask"][:, :th, :tw]
-                    roof_logit_accum[:, y : y + th, x : x + tw] += (
-                        logits * blend[np.newaxis]
-                    )
-                elif key in preds:
-                    logits = preds[key][:th, :tw]
-                    logit_accum[key][y : y + th, x : x + tw] += logits * blend
-
-            weight_map[y : y + th, x : x + tw] += blend
-
-        # Final normalization and activation
-        weight_map = np.maximum(weight_map, 1e-8)
-        results = {}
-
-        for key in masks_to_predict:
-            if key == "roof_type_mask" and roof_logit_accum is not None:
-                for c in range(5):
-                    roof_logit_accum[c] /= weight_map
-                # Set nodata area to background (class 0) by boosting background logit
-                roof_logit_accum[0][nodata_map] = 100.0
-                results["roof_type_mask"] = roof_logit_accum.argmax(axis=0).astype(
-                    np.uint8
+            for mask_key, task_name in self.SEGMENTATION_TASKS.items():
+                if mask_key not in masks_to_predict:
+                    continue
+                preds = self._predict_single_task(tile_img, task=task_name)
+                logits = preds.squeeze()[:th_act, :tw_act]
+                accumulators[mask_key][y0 : y0 + th_act, x0 : x0 + tw_act] += (
+                    logits * blend
                 )
-            elif key in logit_accum:
-                avg_logits = logit_accum[key] / weight_map
-                prob = 1.0 / (1.0 + np.exp(-avg_logits))
-                prob[nodata_map] = 0
-                results[key] = prob
 
-        return results
+            if self.yolo:
+                results = self.yolo.predict(tile_img, conf=0.25, verbose=False)
+                for res in results:
+                    for box in res.boxes:
+                        bx1, by1, bx2, by2 = box.xyxy[0].cpu().numpy()
+                        detections.append(
+                            {
+                                "box": [bx1 + x0, by1 + y0, bx2 + x0, by2 + y0],
+                                "class": int(box.cls[0]),
+                                "conf": float(box.conf[0]),
+                            }
+                        )
 
-    def _predict_single_tile(
-        self, tile: np.ndarray, return_logits: bool = False
-    ) -> Dict[str, np.ndarray]:
-        """Predict on a single tile (H, W, 3) uint8."""
-        # Normalize
+        weight_map = np.maximum(weight_map, 1e-8)
+        final_results = {}
+        for key, accum in accumulators.items():
+            final_results[key] = 1.0 / (1.0 + np.exp(-(accum / weight_map)))
+
+        if "building_mask" in final_results and hasattr(self.model, "roof_model"):
+            logger.info("Classifying building roof types...")
+            final_results["roof_type_mask"] = self._classify_roofs(
+                tif_path, final_results["building_mask"]
+            )
+
+        final_results["detections"] = detections
+        return final_results
+
+    def _predict_single_task(self, tile: np.ndarray, task: str) -> np.ndarray:
         img = tile.astype(np.float32) / 255.0
         img = (img - IMAGENET_MEAN) / IMAGENET_STD
-
-        # To tensor
-        tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float()
-        tensor = tensor.to(self.device)
-
-        # Forward
+        tensor = (
+            torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float().to(self.device)
+        )
         with torch.no_grad():
-            outputs = self.model(tensor)
+            outputs = self.model(tensor, task=task)
+            for val in outputs.values():
+                return val.cpu().numpy()
+        return np.zeros((1, 1, self.tile_size, self.tile_size))
 
-        # Convert to numpy
-        result = {}
-        # Tasks we expect results for
-        all_tasks = self.BINARY_MASKS + ["roof_type_mask"]
+    def _classify_roofs(self, tif_path: Path, building_mask: np.ndarray) -> np.ndarray:
+        from skimage.measure import label, regionprops
 
-        for key in all_tasks:
-            # Handle naming inconsistency between head output keys and prediction keys
-            # Model output keys are like 'building_mask', 'road_mask', but internally in predict_tif
-            # we use 'building_mask' as key in masks_to_predict.
-            # Looking at SvamitvaModel.forward:
-            # outputs["building_mask"], outputs["roof_type_mask"], outputs["road_mask"], etc.
-            # So the keys already have _mask except for roof_type_mask.
-            if key in outputs:
-                logits = outputs[key].squeeze().cpu().numpy()
-                if return_logits:
-                    result[key] = logits
-                else:
-                    if key == "roof_type_mask":
-                        # Softmax for probabilities
-                        exp_l = np.exp(logits - np.max(logits, axis=0))
-                        result[key] = exp_l / np.sum(exp_l, axis=0)
-                    else:
-                        # Sigmoid for binary
-                        result[key] = 1.0 / (1.0 + np.exp(-logits))
-        return result
+        binary = (building_mask > self.threshold).astype(np.uint8)
+        labels = label(binary)
+        props = regionprops(labels)
+        roof_output = np.zeros_like(building_mask, dtype=np.uint8)
 
-    def _is_nodata_tile(self, tile: np.ndarray, threshold: float = 0.99) -> bool:
-        """Check if a tile is mostly NoData (0,0,0)."""
-        # Sum of channels == 0 for NoData
-        mask = np.sum(tile, axis=-1) == 0
-        return mask.mean() > threshold
+        for prop in tqdm(props, desc="Roof Classification", leave=False):
+            y1, x1, y2, x2 = prop.bbox
+            with Reader(str(tif_path)) as src:
+                pad = 15
+                patch = src.part(
+                    (
+                        max(0, x1 - pad),
+                        max(0, y1 - pad),
+                        min(building_mask.shape[1], x2 + pad),
+                        min(building_mask.shape[0], y2 + pad),
+                    ),
+                    width=224,
+                    height=224,
+                ).data
 
-    def predict_image(
-        self,
-        image: np.ndarray,
-        selected_masks: Optional[List[str]] = None,
-    ) -> Dict[str, np.ndarray]:
-        """
-        Run inference on an in-memory image (H, W, 3) uint8.
-        Uses tiling for large images, single-pass for small ones.
-        """
-        H, W = image.shape[:2]
-
-        if H <= self.tile_size and W <= self.tile_size:
-            preds = self._predict_single_tile(image)
-            results = {}
-            for key in selected_masks or self.BINARY_MASKS:
-                if key in preds:
-                    if key == "roof_type_mask":
-                        results[key] = preds[key].argmax(axis=0).astype(np.uint8)
-                    else:
-                        results[key] = preds[key]
-            return results
-
-        # Tile large images
-        if selected_masks is None:
-            selected_masks = self.BINARY_MASKS + ["roof_type_mask"]
-
-        accum = {k: np.zeros((H, W), dtype=np.float32) for k in selected_masks}
-        weight_map = np.zeros((H, W), dtype=np.float32)
-        roof_accum = None
-        if "roof_type_mask" in selected_masks:
-            roof_accum = np.zeros((5, H, W), dtype=np.float32)
-
-        step = self.tile_size - self.overlap
-        for y in range(0, H, step):
-            for x in range(0, W, step):
-                h = min(self.tile_size, H - y)
-                w = min(self.tile_size, W - x)
-                if h < self.tile_size // 4 or w < self.tile_size // 4:
-                    continue
-
-                tile = image[y : y + h, x : x + w]
-                if h < self.tile_size or w < self.tile_size:
-                    padded = np.zeros(
-                        (self.tile_size, self.tile_size, 3), dtype=np.uint8
-                    )
-                    padded[:h, :w] = tile
-                    tile = padded
-
-                # ── NoData Skipping ──────────────────────────────────────────
-                # If the tile is > 99% NoData (black), skip it
-                if self._is_nodata_tile(tile):
-                    weight_map[y : y + h, x : x + w] += self.blend_kernel[:h, :w]
-                    continue
-
-                preds = self._predict_single_tile(tile)
-                blend = self.blend_kernel[:h, :w]
-
-                for key in selected_masks:
-                    if key == "roof_type_mask" and roof_accum is not None:
-                        roof_accum[:, y : y + h, x : x + w] += (
-                            preds.get("roof_type_mask", np.zeros((5, h, w)))[:, :h, :w]
-                            * blend[np.newaxis]
-                        )
-                    elif key in preds:
-                        accum[key][y : y + h, x : x + w] += preds[key][:h, :w] * blend
-                weight_map[y : y + h, x : x + w] += blend
-
-        weight_map = np.maximum(weight_map, 1e-8)
-        results = {}
-        for key in selected_masks:
-            if key == "roof_type_mask" and roof_accum is not None:
-                for c in range(5):
-                    roof_accum[c] /= weight_map
-                results["roof_type_mask"] = roof_accum.argmax(axis=0).astype(np.uint8)
-            elif key in accum:
-                results[key] = accum[key] / weight_map
-
-        return results
+            p_tensor = (
+                torch.from_numpy(patch).float().unsqueeze(0).to(self.device) / 255.0
+            )
+            p_tensor = (
+                p_tensor - torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1).to(self.device)
+            ) / torch.tensor(IMAGENET_STD).view(1, 3, 1, 1).to(self.device)
+            with torch.no_grad():
+                logits = self.model.roof_model(p_tensor)
+                roof_output[labels == prop.label] = torch.argmax(logits, dim=1).item()
+        return roof_output
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
-
-def load_model_for_inference(
-    checkpoint_path: str,
+def load_ensemble_pipeline(
+    weights_path: str,
+    yolo_path: Optional[str] = None,
     device: torch.device = torch.device("cpu"),
-) -> nn.Module:
-    """Load a trained model from checkpoint."""
-    from models.model import SvamitvaModel
+) -> TiledPredictor:
+    from models.model import EnsembleSvamitvaModel
 
-    ckpt_path = Path(checkpoint_path)
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location="cpu",
-        weights_only=True,
-    )
-
-    # Integrity check
-    state = checkpoint.get("model_state_dict", checkpoint)
-    if not isinstance(state, dict) or len(state) == 0:
-        raise ValueError("Invalid checkpoint: empty state dict")
-
-    # Detect backbone from weights
-    backbone = "sam2" if any("encoder.encoder" in k for k in state) else "resnet50"
-
-    model = SvamitvaModel(backbone=backbone, pretrained=False)
-    model.load_state_dict(state, strict=False)
-    model = model.to(device).eval()
-
-    logger.info(f"Loaded model ({backbone}) from {ckpt_path}")
-    return model
+    model = EnsembleSvamitvaModel(pretrained=False)
+    if Path(weights_path).exists():
+        ckpt = torch.load(weights_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(ckpt.get("model_state_dict", ckpt), strict=False)
+    return TiledPredictor(model, yolo_path=yolo_path, device=device)

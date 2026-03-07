@@ -1,5 +1,5 @@
 """
-Training configuration dataclass for SVAMITVA SAM2 model.
+Training configuration dataclass for SVAMITVA Ensemble SOTA Architecture (V3).
 """
 
 from dataclasses import dataclass, field
@@ -9,27 +9,18 @@ from typing import Dict, List, Optional
 
 @dataclass
 class TrainingConfig:
-    """All hyperparameters and paths for training."""
+    """All hyperparameters and paths for ensemble V3 training."""
 
     # ── Paths ────────────────────────────────────────────────────────────────
-    train_dirs: List[str] = field(
-        default_factory=lambda: [
-            "data/MAP1",
-            "data/MAP2",
-        ]
-    )
-    val_dir: Optional[str] = None
-    checkpoint_dir: str = "checkpoints"
-    log_dir: str = "logs"
+    train_dirs: List[Path] = field(default_factory=lambda: [Path("data/MAP1")])
+    val_dir: Optional[Path] = None
+    checkpoint_dir: Path = Path("checkpoints")
+    log_dir: Path = Path("logs")
 
     # ── Model ────────────────────────────────────────────────────────────────
-    backbone: str = "sam2"
-    sam2_checkpoint: str = "checkpoints/sam2.1_hiera_base_plus.pt"
-    sam2_model_cfg: str = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+    backbone: str = "ensemble"
     pretrained: bool = True
-    freeze_encoder: bool = False
     num_roof_classes: int = 5
-    fpn_channels: int = 256
     dropout: float = 0.1
 
     # ── Training ─────────────────────────────────────────────────────────────
@@ -43,14 +34,14 @@ class TrainingConfig:
     warmup_epochs: int = 5
     gradient_clip: float = 0.5
     mixed_precision: bool = True
-    freeze_backbone_epochs: int = 3
+    freeze_backbone_epochs: int = 5
     seed: int = 42
     force_cpu: bool = False
 
     # ── Data ─────────────────────────────────────────────────────────────────
     tile_size: int = 512
     tile_overlap: int = 64
-    num_workers: int = 0
+    num_workers: int = 4
     pin_memory: bool = True
     val_split: float = 0.2
 
@@ -60,6 +51,9 @@ class TrainingConfig:
             "building": 1.0,
             "road": 1.0,
             "waterbody": 1.0,
+            "utility_line": 1.0,
+            "railway": 1.0,
+            "roof_type": 0.5,
         }
     )
 
@@ -73,15 +67,22 @@ class TrainingConfig:
     # ── Logging ──────────────────────────────────────────────────────────────
     log_every_n_steps: int = 50
     use_wandb: bool = False
-    wandb_project: str = "svamitva-sam2"
-    experiment_name: str = "baseline"
+    wandb_project: str = "svamitva-ensemble-v3"
+    experiment_name: str = "ensemble_baseline"
 
     def __post_init__(self):
-        self.train_dirs = [Path(d) for d in self.train_dirs]
-        if self.val_dir:
+        # Ensure Paths are correctly typed
+        if isinstance(self.train_dirs, list):
+            self.train_dirs = [
+                Path(d) if not isinstance(d, Path) else d for d in self.train_dirs
+            ]
+        if self.val_dir and not isinstance(self.val_dir, Path):
             self.val_dir = Path(self.val_dir)
-        self.checkpoint_dir = Path(self.checkpoint_dir)
-        self.log_dir = Path(self.log_dir)
+        if not isinstance(self.checkpoint_dir, Path):
+            self.checkpoint_dir = Path(self.checkpoint_dir)
+        if not isinstance(self.log_dir, Path):
+            self.log_dir = Path(self.log_dir)
+
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
