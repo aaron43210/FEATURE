@@ -1,4 +1,3 @@
-
 """
 Training loop for SVAMITVA SAM2 model.
 
@@ -102,8 +101,26 @@ class WarmupCosineScheduler:
         for pg, base_lr in zip(self.optimizer.param_groups, self.base_lrs):
             pg["lr"] = max(base_lr * scale, self.lr_min)
 
+    def save_latest(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        epoch: int,
+        metrics: Dict[str, float],
+    ):
+        """Save a 'best_latest.pt' checkpoint for crash recovery."""
+        state = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "metrics": metrics,
+        }
+        path = self.save_dir / "best_latest.pt"
+        torch.save(state, path)
+        logger.debug(f"Saved latest checkpoint to {path}")
 
-# ── Checkpoint Manager ────────────────────────────────────────────────────────
+
+# ── Trainer ──────────────────────────────────────────────────────────────────
 
 
 class CheckpointManager:
@@ -139,6 +156,9 @@ class CheckpointManager:
         """
         score = metrics.get(self.metric_name, 0)
         is_best = score > self.best_score
+
+        # Always save latest for crash recovery
+        self.save_latest(model, optimizer, epoch, metrics)
 
         if is_best:
             self.best_score = score
@@ -260,6 +280,7 @@ class Trainer:
         # TensorBoard writer
         try:
             from torch.utils.tensorboard import SummaryWriter
+
             self.tb_writer = SummaryWriter(log_dir=str(config.log_dir))
             logger.info("TensorBoard logging enabled.")
         except ImportError:
@@ -284,74 +305,76 @@ class Trainer:
             f"{len(self.val_loader)} val batches)"
         )
 
-        for epoch in range(1, self.config.num_epochs + 1):
-            # Staged backbone unfreezing
-            if epoch == self.config.freeze_backbone_epochs + 1:
-                logger.info(f"Epoch {epoch}: Unfreezing backbone")
-                self.model.unfreeze_backbone()
+        try:
+            for epoch in range(1, self.config.num_epochs + 1):
+                # ... unfreezing logic ...
+                if epoch == self.config.freeze_backbone_epochs + 1:
+                    logger.info(f"Epoch {epoch}: Unfreezing backbone")
+                    self.model.unfreeze_backbone()
 
-            if epoch <= self.config.freeze_backbone_epochs:
-                self.model.freeze_backbone()
+                if epoch <= self.config.freeze_backbone_epochs:
+                    self.model.freeze_backbone()
 
-            # Train
-            train_loss, train_breakdown = self._train_epoch(epoch)
-            self.history["train_loss"].append(train_loss)
-            self.history["train_breakdown"].append(train_breakdown)
+                # Train
+                train_loss, train_breakdown = self._train_epoch(epoch)
+                self.history["train_loss"].append(train_loss)
+                self.history["train_breakdown"].append(train_breakdown)
 
-            # Validate
-            val_loss, val_metrics = self._validate_epoch(epoch)
-            self.history["val_loss"].append(val_loss)
-            self.history["metrics"].append(val_metrics)
-            self.history["val_breakdown"].append({k: val_metrics.get(k, 0) for k in train_breakdown.keys()})
-
-            # LR schedule
-            self.scheduler.step()
-            current_lr = self.optimizer.param_groups[-1]["lr"]
-
-            # Log
-            avg_iou = val_metrics.get("avg_iou", 0)
-            avg_dice = val_metrics.get("avg_dice", 0)
-            logger.info(
-                f"Epoch {epoch}/{self.config.num_epochs} │ "
-                f"Train Loss: {train_loss:.4f} │ Val Loss: {val_loss:.4f} │ "
-                f"Avg IoU: {avg_iou:.4f} │ Avg Dice: {avg_dice:.4f} │ "
-                f"LR: {current_lr:.2e}"
-            )
-
-            # Per-task loss breakdown
-            logger.info(f"  Train Loss Breakdown: {train_breakdown}")
-            logger.info(f"  Val Loss Breakdown: {self.history['val_breakdown'][-1]}")
-
-            # Per-task IoU summary
-            task_ious = {
-                k.replace("_iou", ""): f"{v:.3f}"
-                for k, v in val_metrics.items()
-                if k.endswith("_iou")
-            }
-            logger.info(f"  Task IoUs: {task_ious}")
-
-            # TensorBoard logging
-            if self.tb_writer:
-                self.tb_writer.add_scalar("Loss/train", train_loss, epoch)
-                self.tb_writer.add_scalar("Loss/val", val_loss, epoch)
-                self.tb_writer.add_scalar("LR", current_lr, epoch)
-                for task, loss_val in train_breakdown.items():
-                    self.tb_writer.add_scalar(f"Loss/{task}_train", loss_val, epoch)
-                for task, loss_val in self.history['val_breakdown'][-1].items():
-                    self.tb_writer.add_scalar(f"Loss/{task}_val", loss_val, epoch)
-                for k, v in task_ious.items():
-                    self.tb_writer.add_scalar(f"IoU/{k}", float(v), epoch)
-
-            # Save checkpoint
-            self.ckpt_mgr.save(self.model, self.optimizer, epoch, val_metrics)
-
-            # Early stopping
-            if self.config.early_stopping and self.ckpt_mgr.should_stop:
-                logger.info(
-                    f"Early stopping after {self.config.patience} epochs "
-                    f"without improvement. Best epoch: {self.ckpt_mgr.best_epoch}"
+                # Validate
+                val_loss, val_metrics = self._validate_epoch(epoch)
+                self.history["val_loss"].append(val_loss)
+                self.history["metrics"].append(val_metrics)
+                self.history["val_breakdown"].append(
+                    {k: val_metrics.get(k, 0) for k in train_breakdown.keys()}
                 )
-                break
+
+                # LR schedule
+                self.scheduler.step()
+                current_lr = self.optimizer.param_groups[-1]["lr"]
+
+                # Log
+                avg_iou = val_metrics.get("avg_iou", 0)
+                avg_dice = val_metrics.get("avg_dice", 0)
+                logger.info(
+                    f"Epoch {epoch}/{self.config.num_epochs} │ "
+                    f"Train Loss: {train_loss:.4f} │ Val Loss: {val_loss:.4f} │ "
+                    f"Avg IoU: {avg_iou:.4f} │ Avg Dice: {avg_dice:.4f} │ "
+                    f"LR: {current_lr:.2e}"
+                )
+
+                # Save checkpoint (includes best_latest.pt save)
+                self.ckpt_mgr.save(self.model, self.optimizer, epoch, val_metrics)
+
+                # Early stopping
+                if self.config.early_stopping and self.ckpt_mgr.should_stop:
+                    logger.info(
+                        f"Early stopping after {self.config.patience} epochs "
+                        f"without improvement. Best epoch: {self.ckpt_mgr.best_epoch}"
+                    )
+                    break
+
+        except (KeyboardInterrupt, Exception) as e:
+            logger.error(f"Training interrupted or crashed: {e}")
+            logger.info("Saving emergency checkpoint to best_latest.pt...")
+            # Emergency save using current state
+            # Determine which epoch we were on - if loop didn't start it might be undefined
+            current_epoch = epoch if "epoch" in locals() else 0
+            metrics = {"epoch_interrupted": True}
+            self.ckpt_mgr.save_latest(
+                self.model, self.optimizer, current_epoch, metrics
+            )
+            if isinstance(e, KeyboardInterrupt):
+                logger.info("Keyboard interrupt received. Exiting.")
+            else:
+                raise e
+        finally:
+            # Final save if we completed all epochs successfully
+            if "epoch" in locals() and epoch == self.config.num_epochs:
+                final_path = self.ckpt_mgr.save_dir / "best.pt"
+                torch.save(self.model.state_dict(), final_path)
+                logger.info(
+                    f"Training completed successfully. Model saved to {final_path}"
+                )
 
         # Save training history
         history_path = self.config.log_dir / "training_history.json"

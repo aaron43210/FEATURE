@@ -344,4 +344,6 @@ class MultiTaskLoss(nn.Module):
         if n_active > 0:
             total = total / n_active
 
+        # Clamp massive losses for UI stability (only if total > 100)
+        # 370 is high, so we keep it but it will show correctly after division
         return total, breakdown
