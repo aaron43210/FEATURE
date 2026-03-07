@@ -62,8 +62,8 @@ def main():
             "Ensemble Checkpoint (.pt)", "checkpoints/ensemble_v3.pt"
         )
         yolo_path = st.text_input("YOLOv8 Weights (.pt)", "checkpoints/yolov8s.pt")
-        st.divider()
-        selected = {k: st.checkbox(v[0], value=True) for k, v in FEATURES.items()}
+        for k, v in FEATURES.items():
+            st.checkbox(v[0], value=True)
         threshold = st.slider("Detection Threshold", 0.1, 0.9, 0.5)
         alpha = st.slider("Overlay Opacity", 0.1, 0.8, 0.4)
 
