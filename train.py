@@ -193,7 +193,7 @@ def main():
         if resume_path.exists():
             logger.info(f"Resuming from {resume_path}")
             checkpoint = torch.load(
-                resume_path, map_location="cpu", weights_only=True
+                resume_path, map_location="cpu"
             )
             model.load_state_dict(checkpoint["model_state_dict"])
         else:
