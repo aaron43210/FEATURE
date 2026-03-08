@@ -258,7 +258,7 @@ class ShapefileAnnotationParser:
             logger.debug(f"  [{feature_type}] tile has no features (all-zero mask)")
             return mask
         else:
-            logger.info(f"  [{feature_type}] mask positive pixels: {n_pos}")
+            logger.debug(f"  [{feature_type}] mask positive pixels: {n_pos}")
 
         # Optional neighborhood refinement to reduce rasterization noise.
         # Run only when mask is neither empty nor nearly full (speed guard).

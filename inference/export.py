@@ -9,7 +9,7 @@ V3 Improvements:
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, Union
 
 import geopandas as gpd
 import numpy as np
@@ -171,10 +171,21 @@ def _roof_mask_to_records(
 class GISExporter:
     """Production exporter for ensemble V3 predictions."""
 
-    def __init__(self, output_dir: Path, crs: Any):
+    def __init__(
+        self,
+        output_dir: Path,
+        crs: Any,
+        default_threshold: float = 0.5,
+        task_thresholds: Optional[Dict[str, float]] = None,
+    ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.crs = crs
+        self.default_threshold = float(default_threshold)
+        self.task_thresholds = task_thresholds or {}
+
+    def _get_threshold(self, key: str) -> float:
+        return float(self.task_thresholds.get(key, self.default_threshold))
 
     def export(
         self,
@@ -210,6 +221,7 @@ class GISExporter:
             geoms = _mask_to_geometries(
                 mask,
                 transform,
+                threshold=self._get_threshold(key),
                 geom_type=str(config["type"]),
                 min_val=float(config.get("min_area", config.get("min_length", 0))),
                 simplify_tol=float(config.get("simplify", 0)),
@@ -295,12 +307,24 @@ def export_predictions(
     results: Dict[str, Any],
     tif_path: Path,
     output_dir: Path,
-    threshold: float = 0.5,
+    threshold: Union[float, Dict[str, float]] = 0.5,
     roof_type_mask: Optional[np.ndarray] = None,
 ) -> Dict[str, Path]:
     """Compatibility wrapper."""
+    if isinstance(threshold, dict):
+        default_threshold = 0.5
+        task_thresholds = threshold
+    else:
+        default_threshold = float(threshold)
+        task_thresholds = None
+
     with rasterio.open(tif_path) as src:
-        exporter = GISExporter(output_dir, src.crs)
+        exporter = GISExporter(
+            output_dir,
+            src.crs,
+            default_threshold=default_threshold,
+            task_thresholds=task_thresholds,
+        )
         return exporter.export(
             results, roof_mask=roof_type_mask, transform=src.transform
         )

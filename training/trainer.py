@@ -398,10 +398,26 @@ class Trainer:
                 and "epoch" in locals()
                 and epoch == self.config.num_epochs
             ):
-                final_path = self.ckpt_mgr.save_dir / "best.pt"
-                torch.save(self.model.state_dict(), final_path)
+                # Do not overwrite ckpt manager's best.pt with the last epoch.
+                # Save final epoch weights separately for reproducibility/debug.
+                final_path = self.ckpt_mgr.save_dir / "final_last_epoch.pt"
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model_state_dict": self.model.state_dict(),
+                        "optimizer_state_dict": self.optimizer.state_dict(),
+                        "scheduler_state_dict": (
+                            self.scheduler.state_dict()
+                            if self.scheduler is not None
+                            else None
+                        ),
+                    },
+                    final_path,
+                )
                 logger.info(
-                    f"Training completed successfully. Model saved to {final_path}"
+                    "Training completed successfully. "
+                    f"Last-epoch checkpoint saved to {final_path} "
+                    "(best.pt preserved from best validation epoch)."
                 )
 
         # Save training history

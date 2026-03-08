@@ -140,27 +140,26 @@ class FPNDecoder(nn.Module):
         Returns:
             (B, out_channels, H_max, W_max) fused feature map
         """
-        # Sort by spatial resolution (largest stride → smallest = coarse to fine)
-        sorted_names = sorted(
-            features.keys(),
-            key=lambda k: features[k].shape[2],  # sort by height (ascending)
-        )
+        # Sort by spatial resolution (Coarsest to Finest)
+        # s32 > s16 > s8 > s4
+        sorted_keys = sorted(features.keys(), key=lambda k: features[k].shape[2])
 
         # Build lateral projections
         laterals = {}
-        for name in sorted_names:
+        for name in sorted_keys:
             if name in self.laterals:
                 laterals[name] = self.laterals[name](features[name])
             else:
                 # If key not in laterals, skip
                 continue
 
-        # Top-down pathway (coarse to fine)
+        # Top-down pathway (coarsest to finest)
         processed = {}
         prev = None
 
-        # Process coarse-to-fine (reversed order)
-        for name in reversed(sorted_names):
+        # Coarsest level is first in sorted_keys
+        # We want to process from coarsest to finest
+        for name in sorted_keys:
             if name not in laterals:
                 continue
             lat = laterals[name]
@@ -179,7 +178,8 @@ class FPNDecoder(nn.Module):
         target_size = max(processed.values(), key=lambda t: t.shape[2]).shape[2:]
 
         upsampled = []
-        for name in sorted_names:
+        # Join in original order for consistent cat
+        for name in sorted_keys:
             if name not in processed:
                 continue
             feat = processed[name]

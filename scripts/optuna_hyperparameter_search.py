@@ -71,6 +71,12 @@ def parse_args() -> argparse.Namespace:
         help="Tile size used by dataset/dataloaders.",
     )
     parser.add_argument(
+        "--tile_overlap",
+        type=int,
+        default=96,
+        help="Tile overlap in pixels.",
+    )
+    parser.add_argument(
         "--num_workers",
         type=int,
         default=0,
@@ -134,6 +140,7 @@ def _build_config(
         learning_rate=float(hparams["learning_rate"]),
         weight_decay=float(hparams["weight_decay"]),
         tile_size=args.tile_size,
+        tile_overlap=args.tile_overlap,
         num_workers=args.num_workers,
         seed=args.seed + trial.number,
         dropout=float(hparams["dropout"]),
@@ -157,6 +164,7 @@ def objective(trial: optuna.trial.Trial, args: argparse.Namespace) -> float:
         batch_size=config.batch_size,
         num_workers=config.num_workers,
         image_size=config.tile_size,
+        tile_overlap=config.tile_overlap,
         val_split=config.val_split,
     )
 

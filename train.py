@@ -36,13 +36,38 @@ def parse_args():
         help="Directories containing MAP*.tif + shapefiles",
     )
     p.add_argument("--val_dir", default=None, help="Separate validation directory")
+    p.add_argument(
+        "--val_split",
+        type=float,
+        default=0.2,
+        help="Validation split ratio when --val_dir is not provided.",
+    )
+    p.add_argument(
+        "--split_mode",
+        default="map",
+        choices=["map", "tile"],
+        help="Auto-split strategy when --val_dir is not provided.",
+    )
 
     # Training
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--tile_size", type=int, default=512)
+    p.add_argument("--tile_overlap", type=int, default=96)
     p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument(
+        "--max_train_tiles",
+        type=int,
+        default=None,
+        help="Optional cap on train tiles for fast verification runs.",
+    )
+    p.add_argument(
+        "--max_val_tiles",
+        type=int,
+        default=None,
+        help="Optional cap on val tiles for fast verification runs.",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument(
@@ -100,6 +125,9 @@ def main():
             num_epochs=args.epochs,
             learning_rate=args.lr,
             tile_size=args.tile_size,
+            tile_overlap=args.tile_overlap,
+            split_mode=args.split_mode,
+            val_split=args.val_split,
             num_workers=args.num_workers,
             seed=args.seed,
             freeze_backbone_epochs=args.freeze_epochs,
@@ -117,9 +145,14 @@ def main():
         train_dirs=config.train_dirs,
         val_dir=config.val_dir,
         image_size=config.tile_size,
+        tile_overlap=config.tile_overlap,
         batch_size=config.batch_size,
         num_workers=config.num_workers,
         val_split=config.val_split,
+        split_mode=config.split_mode,
+        seed=config.seed,
+        max_train_tiles=args.max_train_tiles,
+        max_val_tiles=args.max_val_tiles,
     )
 
     # Model
@@ -150,7 +183,10 @@ def main():
             logger.warning(f"Checkpoint not found: {resume_path}")
 
     # Loss
-    loss_fn = MultiTaskLoss()
+    loss_fn = MultiTaskLoss(
+        weights=config.loss_weights,
+        num_roof_classes=config.num_roof_classes,
+    )
 
     # Train
     trainer = Trainer(

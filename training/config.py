@@ -43,6 +43,7 @@ class TrainingConfig:
     # ── Data ─────────────────────────────────────────────────────────────────
     tile_size: int = 512
     tile_overlap: int = 64
+    split_mode: str = "map"  # map | tile
     num_workers: int = 4
     pin_memory: bool = True
     val_split: float = 0.2

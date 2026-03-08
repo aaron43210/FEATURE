@@ -2,29 +2,41 @@
 
 High-resolution geospatial feature extraction from drone orthophotos, designed for the **SVAMITVA** village mapping scheme. This pipeline achieves **≥95% accuracy** by leveraging a specialized ensemble of State-of-the-Art (SOTA) deep learning models.
 
+## Scope
+This repository is scoped to **Problem Statement 1 only**:
+- Building footprint extraction + roof class (RCC/Tiled/Tin/Others)
+- Road extraction
+- Waterbody extraction
+- Utility point/line extraction (transformer, OHT/tank, wells, etc.)
+
+Problem Statement 2 (DTM/drainage from point cloud) is intentionally excluded from this codebase.
+
 ---
 
 ## 🚀 Key Features
 
-- **Multi-Model Ensemble**: Specialized backbones for distinct geospatial features (Buildings, Roads, Water, etc.).
-- **Point Feature Detection**: Integrated **YOLOv8** for accurate detection of wells, transformers, and tanks.
-- **Roof Classification**: **EfficientNet-B0** driven classification for built-up areas (RCC, Tiled, Tin, Others).
-- **Sequential Tiled Inference**: Optimized VRAM management for processing massive GeoTIFF imagery (village-scale).
+- **Unified SAM2 Architecture**: High-performance **SAM2 (Hiera B+)** backbone and **FPN** decoder for consistent multi-scale feature extraction across all tasks.
+- **Specialized Task Heads**: Integrated multi-head system:
+    - `LineHead` with `DLinkBlock` for road/railway continuity.
+    - `BuildingHead` with dual-output for segmentation and roof classification.
+    - `BinaryHead`/`LineHead` for waterbodies and utilities.
+- **Full State Resumption**: Robust training pipeline with 100% recovery of optimizer and scheduler states.
+- **Interactive Tiled Inference**: Optimized Streamlit V3 app for large-scale GeoTIFF visualization (Global vs. Detail views).
+- **Point Feature Fusion**: Seamless integration of **YOLOv8** for sparse point objects (wells, transformers, tanks).
 - **Unified GIS Export**: Automated generation of georeferenced **GeoPackage (.gpkg)** layers.
-- **Staged Training**: Support for layerwise/staggered optimization (Heads -> Full fine-tuning).
 
 ---
 
 ## 🏗️ Architecture Stack
 
-| Feature | SOTA Model | Backbone |
+| Component | Implementation | Feature Focus |
 | :--- | :--- | :--- |
-| **Buildings / Water** | DeepLabV3+ | ResNet101 |
-| **Roads** | Linknet | ResNet34 |
-| **Utilities (Lines)** | U-Net++ | ResNet34 |
-| **Railway** | Unet | ResNet101 |
-| **Roof Types** | Unet | EfficientNet-B0 |
-| **Point Objects** | YOLOv8 | YOLOv8s |
+| **Backbone** | **SAM2 (Hiera B+)** | Global Multi-scale Feature Extraction |
+| **Decoder** | **FPN + CBAM Attention** | Multi-level Feature Fusion & Context |
+| **Buildings** | Dual-Output Head | Instance Mask + Roof Classification |
+| **Roads/Rail** | D-LinkNet Head | Connectivity & Directional Regularity |
+| **Utilities** | U-Net++ Multi-Head | Linear & Point Feature Precision |
+| **Points** | YOLOv8 + Fusion | Wells, Transformers, Tanks |
 
 ---
 
@@ -52,12 +64,13 @@ The current codebase supports this in practice via:
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/aaronrduk/aaronmodel.git
-   cd aaronmodel
+   git clone https://github.com/<your-org>/<your-repo>.git
+   cd <your-repo>
    ```
 
 2. **Install Dependencies**:
    ```bash
+   source py314/bin/activate
    pip install -r requirements.txt
    ```
 
@@ -74,11 +87,28 @@ streamlit run app.py
 ### 2. Model Training
 Train the ensemble model on your own drone dataset (MAP1, MAP2, etc.):
 ```bash
-python3 train.py --train_dirs /path/to/data --epochs 100 --lr 3e-4
+source py314/bin/activate
+python train.py --train_dirs /path/to/data --epochs 100 --lr 3e-4 --split_mode map --tile_size 1024 --tile_overlap 192
 ```
 *Note: Use `--quick_test` for a 3-epoch smoke test.*
 
-### 3. DGX/GPU Cluster Training
+### 3. MAP1 3-Epoch Verification Run
+```bash
+source py314/bin/activate
+python train.py \
+  --train_dirs ../DATA/MAP1 \
+  --val_dir ../DATA/MAP1 \
+  --epochs 3 \
+  --batch_size 1 \
+  --tile_size 1024 \
+  --tile_overlap 192 \
+  --num_workers 0 \
+  --freeze_epochs 1 \
+  --max_train_tiles 24 \
+  --max_val_tiles 12 \
+  --name map1_3ep_ps1_verify
+```
+### 4. DGX/GPU Cluster Training
 For high-performance environments (NVIDIA DGX), use the provided notebook:
 - `dgx.ipynb`: Contains the multi-phase staged training logic.
 

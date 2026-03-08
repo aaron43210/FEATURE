@@ -25,6 +25,7 @@ Dataset structure expected:
 """
 
 import logging
+import math
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -101,6 +102,89 @@ TILE_SIZE = 512
 TILE_OVERLAP = 96  # Increased overlap for better boundary coverage
 
 
+def _group_sample_indices_by_map(samples: List[Dict[str, Any]]) -> Dict[str, List[int]]:
+    grouped: Dict[str, List[int]] = {}
+    for idx, sample in enumerate(samples):
+        map_name = str(sample.get("map_name", "unknown"))
+        grouped.setdefault(map_name, []).append(idx)
+    return grouped
+
+
+def split_indices_mapwise(
+    samples: List[Dict[str, Any]],
+    val_split: float = 0.2,
+    seed: int = 42,
+) -> Tuple[List[int], List[int], List[str]]:
+    """
+    Split indices by map_name to avoid train/val leakage across tiles
+    from the same village map.
+    """
+    grouped = _group_sample_indices_by_map(samples)
+    map_names = sorted(grouped.keys())
+
+    if not map_names:
+        return [], [], []
+
+    if len(map_names) == 1:
+        # No map-wise split possible with a single map; caller may fallback.
+        only = map_names[0]
+        return [], grouped[only], [only]
+
+    rng = np.random.default_rng(seed)
+    shuffled = list(map_names)
+    rng.shuffle(shuffled)
+
+    n_val_maps = int(round(len(shuffled) * float(val_split)))
+    n_val_maps = max(1, n_val_maps)
+    n_val_maps = min(len(shuffled) - 1, n_val_maps)
+
+    val_maps = set(shuffled[:n_val_maps])
+    train_idx: List[int] = []
+    val_idx: List[int] = []
+
+    for map_name, idxs in grouped.items():
+        if map_name in val_maps:
+            val_idx.extend(idxs)
+        else:
+            train_idx.extend(idxs)
+
+    return train_idx, val_idx, sorted(val_maps)
+
+
+def create_map_kfold_splits(
+    samples: List[Dict[str, Any]],
+    n_splits: int = 5,
+    seed: int = 42,
+) -> List[Tuple[List[int], List[int], List[str]]]:
+    """
+    Build map-level K-fold splits.
+    Returns a list of (train_indices, val_indices, val_map_names).
+    """
+    grouped = _group_sample_indices_by_map(samples)
+    map_names = sorted(grouped.keys())
+    if not map_names:
+        return []
+
+    effective_splits = max(1, min(int(n_splits), len(map_names)))
+    rng = np.random.default_rng(seed)
+    shuffled = list(map_names)
+    rng.shuffle(shuffled)
+    folds = np.array_split(np.array(shuffled, dtype=object), effective_splits)
+
+    all_splits: List[Tuple[List[int], List[int], List[str]]] = []
+    for fold_maps_arr in folds:
+        fold_maps = set([str(m) for m in fold_maps_arr.tolist()])
+        val_idx: List[int] = []
+        train_idx: List[int] = []
+        for map_name, idxs in grouped.items():
+            if map_name in fold_maps:
+                val_idx.extend(idxs)
+            else:
+                train_idx.extend(idxs)
+        all_splits.append((train_idx, val_idx, sorted(fold_maps)))
+    return all_splits
+
+
 class SvamitvaDataset(Dataset):
     """
     PyTorch Dataset for SVAMITVA drone imagery.
@@ -113,6 +197,7 @@ class SvamitvaDataset(Dataset):
         self,
         root_dirs: Union[Path, List[Path]],
         image_size: int = TILE_SIZE,
+        tile_overlap: Optional[int] = None,
         transform: Optional[Callable] = None,
         mode: str = "train",
         tasks: Optional[List[str]] = None,
@@ -122,7 +207,18 @@ class SvamitvaDataset(Dataset):
         else:
             self.root_dirs = [Path(d) for d in root_dirs]
 
-        self.image_size = image_size
+        self.image_size = int(image_size)
+        if self.image_size < 128:
+            raise ValueError("image_size must be >= 128")
+
+        if tile_overlap is None:
+            # Default overlap ~= 20% tile with floor/ceiling guards.
+            self.tile_overlap = int(np.clip(round(self.image_size * 0.2), 32, 256))
+        else:
+            self.tile_overlap = int(tile_overlap)
+        if self.tile_overlap >= self.image_size:
+            raise ValueError("tile_overlap must be smaller than image_size")
+
         self.transform = transform
         self.mode = mode
         self.tasks = tasks  # e.g., ["building", "road"]
@@ -197,7 +293,7 @@ class SvamitvaDataset(Dataset):
                 # ── Fast path for pre-clipped MAPC tiles ─────────────────────
                 # If the image is already ≤ TILE_SIZE in both dimensions,
                 # return a single tile — no K-Means, no overlap logic.
-                if H <= TILE_SIZE and W <= TILE_SIZE:
+                if H <= self.image_size and W <= self.image_size:
                     return [(0, 0)], H, W, tif_crs, tif_tf
 
                 # Fetch a thumbnail to perform K-Means quickly without OOM
@@ -257,9 +353,9 @@ class SvamitvaDataset(Dataset):
                 )
                 valid_mask_thumb = None
 
-        stride = TILE_SIZE - TILE_OVERLAP
-        ys_all = list(range(0, max(H - TILE_SIZE, 0) + 1, stride)) or [0]
-        xs_all = list(range(0, max(W - TILE_SIZE, 0) + 1, stride)) or [0]
+        stride = self.image_size - self.tile_overlap
+        ys_all = list(range(0, max(H - self.image_size, 0) + 1, stride)) or [0]
+        xs_all = list(range(0, max(W - self.image_size, 0) + 1, stride)) or [0]
 
         valid_tiles = []
         for y0 in ys_all:
@@ -268,8 +364,8 @@ class SvamitvaDataset(Dataset):
                     # Project tile box to thumbnail space
                     tx0 = int(x0 * scale)
                     ty0 = int(y0 * scale)
-                    tx1 = int(min(x0 + TILE_SIZE, W) * scale)
-                    ty1 = int(min(y0 + TILE_SIZE, H) * scale)
+                    tx1 = int(min(x0 + self.image_size, W) * scale)
+                    ty1 = int(min(y0 + self.image_size, H) * scale)
 
                     # If this tile region in the thumbnail is 100% background, skip it
                     tile_valid = valid_mask_thumb[ty0:ty1, tx0:tx1]
@@ -287,7 +383,7 @@ class SvamitvaDataset(Dataset):
         samples: List[Dict[str, Any]] = []
 
         # Collect all map directories (either children of roots or roots themselves)
-        candidate_dirs = []
+        candidate_dirs: List[Path] = []
         for root in self.root_dirs:
             if not root.is_dir():
                 logger.warning(f"Root directory not found: {root}")
@@ -299,7 +395,10 @@ class SvamitvaDataset(Dataset):
                 candidate_dirs.append(root)
             else:
                 # Otherwise, check children
-                candidate_dirs.extend([d for d in root.iterdir() if d.is_dir()])
+                candidate_dirs.extend(sorted([d for d in root.iterdir() if d.is_dir()]))
+
+        # Stable deterministic ordering and de-duplication.
+        candidate_dirs = sorted(list(dict.fromkeys(candidate_dirs)))
 
         if not candidate_dirs:
             raise ValueError(f"No map directories found in {self.root_dirs}")
@@ -355,8 +454,8 @@ class SvamitvaDataset(Dataset):
 
             n_before = len(samples)
             for y0, x0 in tiles:
-                y1 = min(y0 + TILE_SIZE, H)
-                x1 = min(x0 + TILE_SIZE, W)
+                y1 = min(y0 + self.image_size, H)
+                x1 = min(x0 + self.image_size, W)
                 win = Window(x0, y0, x1 - x0, y1 - y0)
                 samples.append(
                     {
@@ -431,14 +530,14 @@ class SvamitvaDataset(Dataset):
             with rasterio.open(sample["tif_path"]) as src:
                 tile_data = src.read(
                     window=win,
-                    out_shape=(src.count, TILE_SIZE, TILE_SIZE),
+                    out_shape=(src.count, self.image_size, self.image_size),
                     resampling=rasterio.enums.Resampling.bilinear,
                 )
                 tile_tf = src.window_transform(win)
                 tif_crs = src.crs
         except Exception as e:
             logger.error(f"Error reading tile {sample['tif_path']}: {e}")
-            tile_data = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
+            tile_data = np.zeros((3, self.image_size, self.image_size), dtype=np.uint8)
             tile_tf = sample["tif_tf"]
             tif_crs = sample["tif_crs"]
 
@@ -467,7 +566,7 @@ class SvamitvaDataset(Dataset):
         valid_mask = (image.sum(axis=-1) > 0.01).astype(np.uint8)
 
         # ── Build masks ───────────────────────────────────────────────────────
-        output_shape = (TILE_SIZE, TILE_SIZE)
+        output_shape = (self.image_size, self.image_size)
         masks: Dict[str, np.ndarray] = {"valid_mask": valid_mask}
 
         for _, _, task_key in SHAPEFILE_TASKS:
@@ -553,7 +652,12 @@ def create_dataloaders(
     batch_size: int = 8,
     num_workers: int = 0,
     image_size: int = TILE_SIZE,
+    tile_overlap: Optional[int] = None,
     val_split: float = 0.2,
+    split_mode: str = "map",
+    seed: int = 42,
+    max_train_tiles: Optional[int] = None,
+    max_val_tiles: Optional[int] = None,
 ) -> Tuple:
     """
     Build train and validation DataLoaders.
@@ -562,12 +666,20 @@ def create_dataloaders(
     Otherwise, splits training data by val_split fraction.
     """
     train_ds = SvamitvaDataset(
-        train_dirs, image_size, get_train_transforms(image_size), "train"
+        train_dirs,
+        image_size=image_size,
+        tile_overlap=tile_overlap,
+        transform=get_train_transforms(image_size),
+        mode="train",
     )
 
     if val_dir is not None:
         val_ds_full = SvamitvaDataset(
-            val_dir, image_size, get_val_transforms(image_size), "val"
+            val_dir,
+            image_size=image_size,
+            tile_overlap=tile_overlap,
+            transform=get_val_transforms(image_size),
+            mode="val",
         )
         tr_ds_final = train_ds
         val_ds_final = val_ds_full
@@ -575,15 +687,73 @@ def create_dataloaders(
             f"Separate val dir: {len(tr_ds_final)} train / {len(val_ds_final)} val tiles"
         )
     else:
-        total = len(train_ds)
-        val_size = max(1, int(total * val_split))
-        from torch.utils.data import Subset
-
-        tr_ds_final = Subset(train_ds, list(range(total - val_size)))
-        val_ds_final = Subset(train_ds, list(range(total - val_size, total)))
-        logger.info(
-            f"Auto-split: {len(tr_ds_final)} train / {len(val_ds_final)} val tiles"
+        val_ds = SvamitvaDataset(
+            train_dirs,
+            image_size=image_size,
+            tile_overlap=tile_overlap,
+            transform=get_val_transforms(image_size),
+            mode="val",
         )
+        total = len(train_ds)
+        if len(val_ds) != total:
+            raise RuntimeError(
+                "Train/val dataset scans differ in tile count for the same train_dirs. "
+                "Check deterministic dataset scanning."
+            )
+
+        split_mode_norm = str(split_mode).strip().lower()
+        if split_mode_norm not in {"map", "tile"}:
+            logger.warning("Unknown split_mode='%s'; falling back to map split.", split_mode)
+            split_mode_norm = "map"
+
+        if split_mode_norm == "map":
+            train_idx, val_idx, val_maps = split_indices_mapwise(
+                train_ds.samples, val_split=val_split, seed=seed
+            )
+            if not train_idx:
+                logger.warning(
+                    "Map-wise split not possible (likely one map). "
+                    "Falling back to tile-wise split."
+                )
+                split_mode_norm = "tile"
+            else:
+                logger.info(
+                    "Auto-split (map-wise): %d train / %d val tiles | val maps: %s",
+                    len(train_idx),
+                    len(val_idx),
+                    ", ".join(val_maps),
+                )
+
+        if split_mode_norm == "tile":
+            val_size = max(1, int(math.ceil(total * val_split)))
+            val_size = min(total - 1, val_size) if total > 1 else 1
+            rng = np.random.default_rng(seed)
+            perm = rng.permutation(total).tolist()
+            val_idx = perm[:val_size]
+            train_idx = perm[val_size:]
+            logger.info(
+                "Auto-split (tile-wise): %d train / %d val tiles",
+                len(train_idx),
+                len(val_idx),
+            )
+
+        tr_ds_final = Subset(train_ds, train_idx)
+        val_ds_final = Subset(val_ds, val_idx)
+
+    # Optional caps for fast smoke runs on very large maps.
+    from torch.utils.data import Subset
+
+    if max_train_tiles is not None and max_train_tiles > 0 and len(tr_ds_final) > max_train_tiles:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(len(tr_ds_final), size=int(max_train_tiles), replace=False).tolist()
+        tr_ds_final = Subset(tr_ds_final, idx)
+        logger.info("Applied max_train_tiles=%d", len(tr_ds_final))
+
+    if max_val_tiles is not None and max_val_tiles > 0 and len(val_ds_final) > max_val_tiles:
+        rng = np.random.default_rng(seed + 1)
+        idx = rng.choice(len(val_ds_final), size=int(max_val_tiles), replace=False).tolist()
+        val_ds_final = Subset(val_ds_final, idx)
+        logger.info("Applied max_val_tiles=%d", len(val_ds_final))
 
     train_loader = torch.utils.data.DataLoader(
         tr_ds_final,
@@ -606,3 +776,70 @@ def create_dataloaders(
         f"DataLoaders ready: {len(train_loader)} train batches, {len(val_loader)} val batches"
     )
     return train_loader, val_loader
+
+
+def create_kfold_dataloaders(
+    train_dirs: List[Path],
+    n_splits: int = 5,
+    batch_size: int = 8,
+    num_workers: int = 0,
+    image_size: int = TILE_SIZE,
+    tile_overlap: Optional[int] = None,
+    seed: int = 42,
+) -> List[Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, List[str]]]:
+    """
+    Create map-level K-fold train/val DataLoaders.
+    Returns list of (train_loader, val_loader, val_map_names).
+    """
+    train_ds = SvamitvaDataset(
+        train_dirs,
+        image_size=image_size,
+        tile_overlap=tile_overlap,
+        transform=get_train_transforms(image_size),
+        mode="train",
+    )
+    val_ds = SvamitvaDataset(
+        train_dirs,
+        image_size=image_size,
+        tile_overlap=tile_overlap,
+        transform=get_val_transforms(image_size),
+        mode="val",
+    )
+    if len(train_ds) != len(val_ds):
+        raise RuntimeError("Train/val dataset size mismatch while building k-fold loaders.")
+
+    splits = create_map_kfold_splits(train_ds.samples, n_splits=n_splits, seed=seed)
+    from torch.utils.data import Subset
+
+    fold_loaders: List[
+        Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, List[str]]
+    ] = []
+    for train_idx, val_idx, val_maps in splits:
+        tr_subset = Subset(train_ds, train_idx)
+        val_subset = Subset(val_ds, val_idx)
+        tr_loader = torch.utils.data.DataLoader(
+            tr_subset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=(num_workers > 0),
+            drop_last=len(tr_subset) > batch_size,
+            persistent_workers=(num_workers > 0),
+        )
+        val_loader = torch.utils.data.DataLoader(
+            val_subset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=(num_workers > 0),
+            persistent_workers=(num_workers > 0),
+        )
+        fold_loaders.append((tr_loader, val_loader, val_maps))
+
+    logger.info(
+        "Built %d map-level folds from %d tiles (%d maps).",
+        len(fold_loaders),
+        len(train_ds),
+        len(_group_sample_indices_by_map(train_ds.samples)),
+    )
+    return fold_loaders

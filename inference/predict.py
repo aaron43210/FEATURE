@@ -10,30 +10,131 @@ Detection model:
 """
 
 import logging
+import sys
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
+import rasterio
 import torch
 import torch.nn as nn
+from rasterio.windows import Window
 from tqdm import tqdm
-
-try:
-    from rio_tiler.io import Reader
-except ImportError:
-    warnings.warn("rio-tiler not installed.")
-
-try:
-    from ultralytics import YOLO
-except ImportError:
-    warnings.warn("ultralytics not installed. YOLOv8 features will be disabled.")
-    YOLO = None
 
 logger = logging.getLogger(__name__)
 
+# Training-time normalization constants (A.Normalize in data/augmentation.py)
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
+def _repo_search_roots() -> List[Path]:
+    roots: List[Path] = []
+    for cand in [Path.cwd(), Path(__file__).resolve().parents[1]]:
+        if cand.exists() and cand.is_dir() and cand not in roots:
+            roots.append(cand)
+    return roots
+
+
+def _discover_local_ultralytics_roots() -> List[Path]:
+    """Discover local YOLO/Ultralytics source trees in the workspace."""
+    candidates: List[Path] = []
+    for root in _repo_search_roots():
+        try:
+            children = [root] + [d for d in root.iterdir() if d.is_dir()]
+        except Exception:
+            children = [root]
+
+        for base in children:
+            if (base / "ultralytics" / "__init__.py").exists() and base not in candidates:
+                candidates.append(base)
+
+            # One extra depth level is enough for typical `*-main` extracts.
+            try:
+                grand_children = [d for d in base.iterdir() if d.is_dir()]
+            except Exception:
+                grand_children = []
+            for child in grand_children:
+                if (child / "ultralytics" / "__init__.py").exists():
+                    if child not in candidates:
+                        candidates.append(child)
+
+    # Prefer folder names likely to be uploaded sources.
+    def _score(path: Path) -> int:
+        name = path.name.lower()
+        if "yolo8-main" in name or "yolov8-main" in name:
+            return 0
+        if "ultralytics" in name or "yolo" in name:
+            return 1
+        return 2
+
+    return sorted(candidates, key=_score)
+
+
+def _load_yolo_class():
+    """Import YOLO class from installed package or a local uploaded source tree."""
+    try:
+        from ultralytics import YOLO as yolo_cls
+
+        return yolo_cls
+    except Exception:
+        pass
+
+    for candidate in _discover_local_ultralytics_roots():
+        if str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+        try:
+            from ultralytics import YOLO as yolo_cls
+
+            logger.info("Loaded ultralytics from local source tree: %s", candidate)
+            return yolo_cls
+        except Exception:
+            continue
+
+    return None
+
+
+YOLO = _load_yolo_class()
+if YOLO is None:
+    warnings.warn(
+        "ultralytics not installed and no local ultralytics source tree found. "
+        "YOLOv8 features will be disabled."
+    )
+
+
+def _percentile_stretch(
+    image: np.ndarray, limits: Tuple[float, float] = (2, 98)
+) -> np.ndarray:
+    """Robust percentile stretching to match training data/dataset.py."""
+    image = image.astype(np.float32)
+    vmin, vmax = np.percentile(image, limits)
+    if vmax - vmin < 1e-6:
+        vmax = vmin + 1.0
+    image = np.clip(image, vmin, vmax)
+    image = (image - vmin) / (vmax - vmin)
+    return image.clip(0.0, 1.0)
+
+
+def _to_rgb(tile: np.ndarray) -> np.ndarray:
+    if tile.ndim != 3:
+        raise ValueError(f"Expected HxWxC tile, got shape {tile.shape}")
+    if tile.shape[2] == 1:
+        return np.repeat(tile, 3, axis=2)
+    if tile.shape[2] == 2:
+        return np.concatenate([tile, tile[:, :, :1]], axis=2)
+    if tile.shape[2] > 3:
+        return tile[:, :, :3]
+    return tile
+
+
+def _to_yolo_uint8(tile: np.ndarray) -> np.ndarray:
+    """
+    Convert raw tile pixels (often uint16 remote-sensing) into YOLO-friendly uint8 RGB.
+    """
+    tile_rgb = _to_rgb(tile)
+    tile_norm = _percentile_stretch(tile_rgb)
+    return np.clip(tile_norm * 255.0, 0, 255).astype(np.uint8)
 
 
 def _gaussian_kernel_2d(size: int, sigma: float = 0.0) -> np.ndarray:
@@ -55,6 +156,80 @@ def _softmax_np(x: np.ndarray, axis: int = 0) -> np.ndarray:
     x = x - np.max(x, axis=axis, keepdims=True)
     ex = np.exp(np.clip(x, -50, 50))
     return ex / np.maximum(ex.sum(axis=axis, keepdims=True), 1e-8)
+
+
+def _box_iou_xyxy(box: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+    """IoU between one box and N boxes, format [x1,y1,x2,y2]."""
+    ix1 = np.maximum(box[0], boxes[:, 0])
+    iy1 = np.maximum(box[1], boxes[:, 1])
+    ix2 = np.minimum(box[2], boxes[:, 2])
+    iy2 = np.minimum(box[3], boxes[:, 3])
+
+    inter_w = np.maximum(0.0, ix2 - ix1)
+    inter_h = np.maximum(0.0, iy2 - iy1)
+    inter = inter_w * inter_h
+
+    box_area = max(0.0, (box[2] - box[0])) * max(0.0, (box[3] - box[1]))
+    boxes_area = np.maximum(0.0, boxes[:, 2] - boxes[:, 0]) * np.maximum(
+        0.0, boxes[:, 3] - boxes[:, 1]
+    )
+    union = np.maximum(box_area + boxes_area - inter, 1e-8)
+    return inter / union
+
+
+def _nms_detections(
+    detections: List[Dict[str, Any]], iou_threshold: float
+) -> List[Dict[str, Any]]:
+    """Class-wise NMS over merged tile detections."""
+    if not detections:
+        return []
+
+    kept: List[Dict[str, Any]] = []
+    classes = sorted({int(d.get("class", -1)) for d in detections})
+    for cls_id in classes:
+        cls_dets = [d for d in detections if int(d.get("class", -1)) == cls_id]
+        if not cls_dets:
+            continue
+
+        boxes = np.array([d["box"] for d in cls_dets], dtype=np.float32)
+        scores = np.array([float(d.get("conf", 0.0)) for d in cls_dets], dtype=np.float32)
+        order = scores.argsort()[::-1]
+
+        while order.size > 0:
+            i = int(order[0])
+            kept.append(cls_dets[i])
+            if order.size == 1:
+                break
+
+            rest = order[1:]
+            ious = _box_iou_xyxy(boxes[i], boxes[rest])
+            order = rest[ious <= iou_threshold]
+
+    kept.sort(key=lambda d: float(d.get("conf", 0.0)), reverse=True)
+    return kept
+
+
+def _extract_state_dict_from_checkpoint(ckpt: Any) -> Dict[str, Any]:
+    """Extract model state dict from common checkpoint layouts."""
+    if isinstance(ckpt, dict):
+        for key in ("model_state_dict", "state_dict", "model"):
+            maybe_state = ckpt.get(key)
+            if isinstance(maybe_state, dict):
+                return dict(maybe_state)
+        return dict(ckpt)
+    raise TypeError(f"Unsupported checkpoint type: {type(ckpt)}")
+
+
+def _strip_common_state_dict_prefixes(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize state_dict keys to this repo's model naming.
+    Handles DataParallel and wrapper prefixes.
+    """
+    fixed = state_dict
+    for prefix in ("module.", "model."):
+        if fixed and all(k.startswith(prefix) for k in fixed.keys()):
+            fixed = {k[len(prefix) :]: v for k, v in fixed.items()}
+    return fixed
 
 
 class TiledPredictor:
@@ -95,6 +270,9 @@ class TiledPredictor:
         threshold: float = 0.5,
         yolo_conf: float = 0.25,
         point_radius_px: int = 5,
+        yolo_iou: float = 0.45,
+        yolo_min_area: float = 9.0,
+        use_tta: bool = False,
     ):
         self.model = model.to(device).eval()
         self.device = device
@@ -103,72 +281,206 @@ class TiledPredictor:
         self.threshold = threshold
         self.yolo_conf = yolo_conf
         self.point_radius_px = point_radius_px
+        self.yolo_iou = yolo_iou
+        self.yolo_min_area = yolo_min_area
+        self.use_tta = use_tta
 
         self.yolo = None
         if yolo_path and YOLO:
-            self.yolo = YOLO(yolo_path)
-            self.yolo.to(device)
+            try:
+                self.yolo = YOLO(yolo_path)
+                self.yolo.to(device)
+                logger.info("Loaded YOLO detector from %s", yolo_path)
+            except Exception as e:
+                logger.warning("Failed to load YOLO model at %s: %s", yolo_path, e)
 
         self.blend_kernel = _gaussian_kernel_2d(tile_size).astype(np.float32)
+        self._tta_flip_dims: Sequence[Tuple[int, ...]] = (
+            [(), (3,), (2,), (2, 3)] if self.use_tta else [()]
+        )
 
     def _get_valid_mask(self, tif_path: Path) -> np.ndarray:
-        """Build a coarse valid-data mask from a thumbnail."""
+        """Build a coarse valid-data mask from a raster thumbnail."""
         try:
-            with Reader(str(tif_path)) as dst:
-                thumb = dst.preview(max_size=1024)
-                return np.any(thumb.data > 0, axis=0)
+            with rasterio.open(str(tif_path)) as src:
+                h, w = src.height, src.width
+                scale = min(1024.0 / max(h, w), 1.0)
+                th = max(1, int(h * scale))
+                tw = max(1, int(w * scale))
+                thumb = src.read(
+                    out_shape=(src.count, th, tw),
+                    resampling=rasterio.enums.Resampling.bilinear,
+                )
+                return np.any(thumb > 0, axis=0)
         except Exception as e:
             logger.warning("Thumbnail scan failed: %s", e)
             return np.ones((1, 1), dtype=bool)
 
-    def _normalize_tile(self, tile: np.ndarray) -> np.ndarray:
+    def _normalize_tile(self, tile: np.ndarray) -> torch.Tensor:
         """
-        Convert tile to normalized RGB float32 tensor input in ImageNet space.
-        Expects tile as HxWxC.
+        Convert tile to normalized RGB float32 tensor input.
+        Matches training preprocessing:
+        percentile stretch to [0,1] -> ImageNet mean/std normalization.
         """
-        if tile.ndim != 3:
-            raise ValueError(f"Expected HxWxC tile, got shape {tile.shape}")
+        image = _to_rgb(tile)
 
-        if tile.shape[2] == 1:
-            tile = np.repeat(tile, 3, axis=2)
-        elif tile.shape[2] > 3:
-            tile = tile[:, :, :3]
-        elif tile.shape[2] == 2:
-            tile = np.concatenate([tile, tile[:, :, :1]], axis=2)
+        # 1) Robust percentile stretch (matches dataset.py)
+        image = _percentile_stretch(image)
+        # 2) ImageNet normalization (matches albumentations A.Normalize)
+        image = (image - IMAGENET_MEAN) / IMAGENET_STD
+        image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0).astype(
+            np.float32
+        )
 
-        tile = tile.astype(np.float32)
-        tmax = float(np.max(tile)) if tile.size > 0 else 1.0
-        if tmax > 1.0:
-            if tmax <= 255.0:
-                tile = tile / 255.0
-            elif tmax <= 65535.0:
-                tile = tile / 65535.0
-            else:
-                tmin = float(np.min(tile))
-                tile = (tile - tmin) / max(tmax - tmin, 1e-6)
+        # (H, W, C) -> (C, H, W)
+        img_t = torch.from_numpy(np.ascontiguousarray(image)).permute(2, 0, 1)
+        return img_t.unsqueeze(0).to(self.device)
 
-        tile = np.clip(tile, 0.0, 1.0)
-        tile = (tile - IMAGENET_MEAN) / IMAGENET_STD
-        return tile
+    def _forward_model_tta(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        merged: Dict[str, torch.Tensor] = {}
+        n_augs = len(self._tta_flip_dims)
+
+        for dims in self._tta_flip_dims:
+            aug_in = torch.flip(tensor, dims=dims) if dims else tensor
+            out = self.model(aug_in, task="all")
+            for key, val in out.items():
+                if not isinstance(val, torch.Tensor):
+                    continue
+                restored = torch.flip(val, dims=dims) if dims else val
+                if key in merged:
+                    merged[key] = merged[key] + restored
+                else:
+                    merged[key] = restored.clone()
+
+        for key in list(merged.keys()):
+            merged[key] = merged[key] / float(n_augs)
+        return merged
 
     def _predict_tile_model(self, tile_img: np.ndarray) -> Dict[str, np.ndarray]:
         """Run the segmentation model for one tile and return numpy outputs."""
-        img = self._normalize_tile(tile_img)
-        tensor = (
-            torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float().to(self.device)
-        )
+        tensor = self._normalize_tile(tile_img)
         with torch.no_grad():
-            outputs = self.model(tensor, task="all")
+            outputs = self._forward_model_tta(tensor)
 
         out_np: Dict[str, np.ndarray] = {}
-        for k, v in outputs.items():
-            if not isinstance(v, torch.Tensor):
-                continue
-            arr = v.detach().cpu().numpy()
+        for key, val in outputs.items():
+            arr = val.detach().cpu().numpy()
             if arr.ndim >= 3:
                 arr = arr[0]  # drop batch dim
-            out_np[k] = arr
+            out_np[key] = arr
         return out_np
+
+    def _run_yolo_tile(
+        self,
+        tile_img: np.ndarray,
+        x0: int,
+        y0: int,
+        tw_act: int,
+        th_act: int,
+        selected_point_keys: Set[str],
+    ) -> List[Dict[str, Any]]:
+        if self.yolo is None or not selected_point_keys:
+            return []
+
+        tile_crop = tile_img[:th_act, :tw_act]
+        if tile_crop.size == 0:
+            return []
+
+        tile_u8 = _to_yolo_uint8(tile_crop)
+        detections: List[Dict[str, Any]] = []
+
+        try:
+            yolo_results = self.yolo.predict(
+                tile_u8,
+                conf=self.yolo_conf,
+                iou=self.yolo_iou,
+                imgsz=max(tw_act, th_act),
+                verbose=False,
+            )
+        except Exception as e:
+            logger.warning("YOLO tile inference failed at (%d,%d): %s", x0, y0, e)
+            return []
+
+        for res in yolo_results:
+            boxes = getattr(res, "boxes", None)
+            if boxes is None:
+                continue
+
+            for box in boxes:
+                try:
+                    cls_id = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    bx1, by1, bx2, by2 = box.xyxy[0].cpu().numpy().tolist()
+                except Exception:
+                    continue
+
+                mask_key = self.YOLO_CLASS_TO_MASK.get(cls_id)
+                if mask_key not in selected_point_keys:
+                    continue
+
+                # Constrain to current crop bounds before global mapping.
+                bx1 = float(np.clip(bx1, 0, tw_act))
+                bx2 = float(np.clip(bx2, 0, tw_act))
+                by1 = float(np.clip(by1, 0, th_act))
+                by2 = float(np.clip(by2, 0, th_act))
+                if bx2 <= bx1 or by2 <= by1:
+                    continue
+
+                area = (bx2 - bx1) * (by2 - by1)
+                if area < self.yolo_min_area:
+                    continue
+
+                gx1, gy1 = bx1 + x0, by1 + y0
+                gx2, gy2 = bx2 + x0, by2 + y0
+                detections.append(
+                    {
+                        "box": [gx1, gy1, gx2, gy2],
+                        "class": cls_id,
+                        "conf": conf,
+                        "mask_key": mask_key,
+                    }
+                )
+        return detections
+
+    def _detections_to_point_masks(
+        self,
+        detections: List[Dict[str, Any]],
+        h: int,
+        w: int,
+        selected: Set[str],
+    ) -> Dict[str, np.ndarray]:
+        point_masks = {
+            key: np.zeros((h, w), dtype=np.float32)
+            for key in self.POINT_KEYS
+            if key in selected
+        }
+        if not point_masks:
+            return point_masks
+
+        try:
+            import cv2
+        except Exception:
+            cv2 = None  # type: ignore
+
+        for det in detections:
+            mask_key = det.get("mask_key")
+            if mask_key not in point_masks:
+                continue
+            x1, y1, x2, y2 = det["box"]
+            conf = float(np.clip(det.get("conf", 1.0), 0.0, 1.0))
+            cx = int(round((x1 + x2) * 0.5))
+            cy = int(round((y1 + y2) * 0.5))
+            radius = max(self.point_radius_px, int(max(x2 - x1, y2 - y1) * 0.25))
+
+            if cv2 is not None:
+                tmp = np.zeros_like(point_masks[mask_key])
+                cv2.circle(tmp, (cx, cy), radius, color=conf, thickness=-1)
+                point_masks[mask_key] = np.maximum(point_masks[mask_key], tmp)
+            else:
+                if 0 <= cy < h and 0 <= cx < w:
+                    point_masks[mask_key][cy, cx] = max(point_masks[mask_key][cy, cx], conf)
+
+        return point_masks
 
     @torch.no_grad()
     def predict_tif(
@@ -178,56 +490,53 @@ class TiledPredictor:
     ) -> Dict[str, Any]:
         """Run full tiled inference for all requested outputs."""
         selected = set(selected_masks or self.ALL_OUTPUT_KEYS)
-        selected = {k for k in selected if k in set(self.ALL_OUTPUT_KEYS)}
+        selected = {key for key in selected if key in set(self.ALL_OUTPUT_KEYS)}
         if not selected:
             selected = set(self.ALL_OUTPUT_KEYS)
 
+        selected_point_keys = self.POINT_KEYS & selected
         valid_thumb = self._get_valid_mask(tif_path)
 
-        with Reader(str(tif_path)) as src:
-            H, W = src.dataset.height, src.dataset.width
-            logger.info("Predicting %s (%dx%d)", tif_path.name, W, H)
+        with rasterio.open(str(tif_path)) as src:
+            h, w = src.height, src.width
+            logger.info("Predicting %s (%dx%d)", tif_path.name, w, h)
 
             th_h, th_w = valid_thumb.shape
-            scale_y, scale_x = th_h / H, th_w / W
+            scale_y, scale_x = th_h / h, th_w / w
 
             model_accum = {
-                k: np.zeros((H, W), dtype=np.float32)
-                for k in self.BINARY_MODEL_KEYS
-                if k in selected
+                key: np.zeros((h, w), dtype=np.float32)
+                for key in self.BINARY_MODEL_KEYS
+                if key in selected
             }
             roof_accum = (
-                np.zeros((5, H, W), dtype=np.float32)
-                if self.ROOF_KEY in selected
-                else None
+                np.zeros((5, h, w), dtype=np.float32) if self.ROOF_KEY in selected else None
             )
-            det_point_masks = {
-                k: np.zeros((H, W), dtype=np.float32)
-                for k in self.POINT_KEYS
-                if k in selected
-            }
-            detections: List[Dict[str, Any]] = []
-            weight_map = np.zeros((H, W), dtype=np.float32)
+            raw_detections: List[Dict[str, Any]] = []
+            weight_map = np.zeros((h, w), dtype=np.float32)
 
             stride = max(1, self.tile_size - self.overlap)
             windows = []
-            for y in range(0, H, stride):
-                for x in range(0, W, stride):
-                    tw = min(self.tile_size, W - x)
-                    th = min(self.tile_size, H - y)
+            for y in range(0, h, stride):
+                for x in range(0, w, stride):
+                    tw = min(self.tile_size, w - x)
+                    th = min(self.tile_size, h - y)
                     tx, ty = int(x * scale_x), int(y * scale_y)
                     if not valid_thumb[min(ty, th_h - 1), min(tx, th_w - 1)]:
                         continue
                     windows.append((x, y, tw, th))
 
             for x0, y0, tw_act, th_act in tqdm(windows, desc="Inference", leave=False):
-                part = src.part(
-                    (x0, y0, x0 + self.tile_size, y0 + self.tile_size),
-                    width=self.tile_size,
-                    height=self.tile_size,
-                    padding=True,
-                ).data
+                win = Window(x0, y0, self.tile_size, self.tile_size)
+                part = src.read(
+                    window=win,
+                    boundless=True,
+                    fill_value=0,
+                )
                 tile_img = np.transpose(part, (1, 2, 0))
+                tile_valid = np.any(tile_img[:th_act, :tw_act] > 0, axis=2)
+                if tile_valid.size == 0 or float(tile_valid.mean()) < 0.01:
+                    continue
                 blend = self.blend_kernel[:th_act, :tw_act]
                 weight_map[y0 : y0 + th_act, x0 : x0 + tw_act] += blend
 
@@ -250,58 +559,21 @@ class TiledPredictor:
                 if roof_accum is not None and self.ROOF_KEY in model_outputs:
                     roof_logits = model_outputs[self.ROOF_KEY]
                     if roof_logits.ndim == 3 and roof_logits.shape[0] >= 2:
-                        roof_probs = _softmax_np(
-                            roof_logits[:, :th_act, :tw_act], axis=0
-                        )
-                        roof_accum[:, y0 : y0 + th_act, x0 : x0 + tw_act] += (
-                            roof_probs * blend[None]
-                        )
+                        roof_probs = _softmax_np(roof_logits[:, :th_act, :tw_act], axis=0)
+                        roof_accum[:, y0 : y0 + th_act, x0 : x0 + tw_act] += roof_probs * blend[None]
 
                 # YOLO point detection (wells / transformers / tanks)
-                if self.yolo is not None and det_point_masks:
-                    tile_u8 = np.clip(tile_img, 0, 255).astype(np.uint8)
-                    yolo_results = self.yolo.predict(
-                        tile_u8, conf=self.yolo_conf, verbose=False
+                if self.yolo is not None and selected_point_keys:
+                    raw_detections.extend(
+                        self._run_yolo_tile(
+                            tile_img=tile_img,
+                            x0=x0,
+                            y0=y0,
+                            tw_act=tw_act,
+                            th_act=th_act,
+                            selected_point_keys=selected_point_keys,
+                        )
                     )
-                    for res in yolo_results:
-                        for box in res.boxes:
-                            cls_id = int(box.cls[0])
-                            mask_key = self.YOLO_CLASS_TO_MASK.get(cls_id)
-                            if mask_key not in det_point_masks:
-                                continue
-
-                            bx1, by1, bx2, by2 = box.xyxy[0].cpu().numpy()
-                            gx1, gy1 = bx1 + x0, by1 + y0
-                            gx2, gy2 = bx2 + x0, by2 + y0
-                            cx = int((gx1 + gx2) / 2.0)
-                            cy = int((gy1 + gy2) / 2.0)
-                            radius = max(
-                                self.point_radius_px,
-                                int(max(gx2 - gx1, gy2 - gy1) * 0.25),
-                            )
-
-                            try:
-                                import cv2
-
-                                cv2.circle(
-                                    det_point_masks[mask_key],
-                                    (cx, cy),
-                                    radius,
-                                    color=1.0,
-                                    thickness=-1,
-                                )
-                            except Exception:
-                                if 0 <= cy < H and 0 <= cx < W:
-                                    det_point_masks[mask_key][cy, cx] = 1.0
-
-                            detections.append(
-                                {
-                                    "box": [float(gx1), float(gy1), float(gx2), float(gy2)],
-                                    "class": cls_id,
-                                    "conf": float(box.conf[0]),
-                                    "mask_key": mask_key,
-                                }
-                            )
 
         weight_map = np.maximum(weight_map, 1e-8)
         final_results: Dict[str, Any] = {}
@@ -318,6 +590,9 @@ class TiledPredictor:
                 roof_mask[final_results["building_mask"] <= self.threshold] = 0
             final_results[self.ROOF_KEY] = roof_mask
 
+        detections = _nms_detections(raw_detections, iou_threshold=self.yolo_iou)
+        det_point_masks = self._detections_to_point_masks(detections, h, w, selected)
+
         # Fuse YOLO points with segmentation point masks
         for point_key in self.POINT_KEYS:
             if point_key not in selected:
@@ -329,13 +604,13 @@ class TiledPredictor:
             elif det_prob is not None:
                 final_results[point_key] = det_prob
             elif seg_prob is None:
-                final_results[point_key] = np.zeros((H, W), dtype=np.float32)
+                final_results[point_key] = np.zeros((h, w), dtype=np.float32)
 
         # Fill any missing requested output key with zeros
         for key in selected:
             if key not in final_results:
                 dtype = np.uint8 if key == self.ROOF_KEY else np.float32
-                final_results[key] = np.zeros((H, W), dtype=dtype)
+                final_results[key] = np.zeros((h, w), dtype=dtype)
 
         final_results["detections"] = detections
         return final_results
@@ -357,18 +632,91 @@ def _resolve_weights_path(weights_path: str) -> Optional[Path]:
     return None
 
 
+def _resolve_yolo_path(yolo_path: Optional[str]) -> Optional[str]:
+    if yolo_path:
+        p = Path(yolo_path)
+        if p.exists():
+            return str(p)
+        logger.warning("YOLO weights not found at %s", p)
+
+    fallback_candidates = [
+        Path("checkpoints/yolov8s.pt"),
+        Path("checkpoints/yolov8n.pt"),
+    ]
+    for cand in fallback_candidates:
+        if cand.exists():
+            logger.info("Using fallback YOLO weights: %s", cand)
+            return str(cand)
+    return None
+
+
 def load_ensemble_pipeline(
     weights_path: str,
     yolo_path: Optional[str] = None,
     device: torch.device = torch.device("cpu"),
+    use_tta: bool = False,
+    yolo_conf: float = 0.25,
+    yolo_iou: float = 0.45,
+    tile_size: int = 512,
+    overlap: int = 128,
 ) -> TiledPredictor:
     from models.model import EnsembleSvamitvaModel
 
     model = EnsembleSvamitvaModel(pretrained=True)
-    resolved_weights = _resolve_weights_path(weights_path)
-    if resolved_weights is not None:
-        ckpt = torch.load(resolved_weights, map_location="cpu", weights_only=False)
-        model.load_state_dict(ckpt.get("model_state_dict", ckpt), strict=False)
-        logger.info("Loaded ensemble weights from %s", resolved_weights)
+    if not hasattr(model.encoder.encoder, "trunk"):
+        logger.warning(
+            "SAM2 encoder trunk not detected. A fallback backbone may be active; "
+            "SAM2-trained checkpoints can produce invalid outputs in this mode."
+        )
 
-    return TiledPredictor(model, yolo_path=yolo_path, device=device)
+    resolved_weights = _resolve_weights_path(weights_path)
+    if resolved_weights is None:
+        raise FileNotFoundError(
+            "No segmentation checkpoint found. "
+            "Set `ckpt_path` to a valid trained weights file (for example "
+            "`checkpoints/best.pt`)."
+        )
+
+    ckpt = torch.load(resolved_weights, map_location="cpu", weights_only=False)
+    state_dict = _extract_state_dict_from_checkpoint(ckpt)
+    state_dict = _strip_common_state_dict_prefixes(state_dict)
+    incompatible = model.load_state_dict(state_dict, strict=False)
+
+    total_model_keys = len(model.state_dict())
+    missing_count = len(incompatible.missing_keys)
+    loaded_count = max(total_model_keys - missing_count, 0)
+    loaded_ratio = loaded_count / max(total_model_keys, 1)
+
+    if loaded_ratio < 0.80:
+        missing_preview = ", ".join(incompatible.missing_keys[:5]) or "none"
+        unexpected_preview = ", ".join(incompatible.unexpected_keys[:5]) or "none"
+        raise RuntimeError(
+            "Checkpoint is incompatible with current model architecture. "
+            f"Loaded {loaded_count}/{total_model_keys} keys ({loaded_ratio:.1%}). "
+            "This often happens when SAM2 is not installed or when checkpoint/model "
+            "configs differ. "
+            f"Missing sample: [{missing_preview}] | "
+            f"Unexpected sample: [{unexpected_preview}]"
+        )
+
+    if incompatible.missing_keys or incompatible.unexpected_keys:
+        logger.warning(
+            "Loaded checkpoint with partial key mismatch: "
+            "%d missing, %d unexpected (loaded %.1f%% of model keys).",
+            len(incompatible.missing_keys),
+            len(incompatible.unexpected_keys),
+            loaded_ratio * 100.0,
+        )
+    logger.info("Loaded ensemble weights from %s", resolved_weights)
+
+    resolved_yolo = _resolve_yolo_path(yolo_path) if YOLO is not None else None
+    return TiledPredictor(
+        model=model,
+        yolo_path=resolved_yolo,
+        device=device,
+        use_tta=use_tta,
+        yolo_conf=yolo_conf,
+        yolo_iou=yolo_iou,
+        tile_size=tile_size,
+        overlap=overlap,
+    )

@@ -5,9 +5,11 @@ Loads Meta's SAM2.1 Hiera B+ checkpoint and exposes the image encoder
 as a multi-scale feature extractor producing 4 hierarchical feature maps.
 """
 
+import importlib.util
 import logging
+import sys
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -22,15 +24,77 @@ SAM2_CHECKPOINT_URL = (
 )
 
 
+def _repo_search_roots() -> List[Path]:
+    roots: List[Path] = []
+    for cand in [Path.cwd(), Path(__file__).resolve().parents[1]]:
+        if cand.exists() and cand.is_dir() and cand not in roots:
+            roots.append(cand)
+    return roots
+
+
+def _discover_local_sam2_roots() -> List[Path]:
+    """Discover local SAM2 source trees in the workspace."""
+    candidates: List[Path] = []
+    for root in _repo_search_roots():
+        try:
+            children = [root] + [d for d in root.iterdir() if d.is_dir()]
+        except Exception:
+            children = [root]
+
+        for base in children:
+            if (base / "sam2" / "build_sam.py").exists() and base not in candidates:
+                candidates.append(base)
+
+            # One extra depth level is enough for typical `sam2-main` extracts.
+            try:
+                grand_children = [d for d in base.iterdir() if d.is_dir()]
+            except Exception:
+                grand_children = []
+            for child in grand_children:
+                if (child / "sam2" / "build_sam.py").exists():
+                    if child not in candidates:
+                        candidates.append(child)
+
+    def _score(path: Path) -> int:
+        name = path.name.lower()
+        if "sam2-main" in name:
+            return 0
+        if "sam2" in name or "segment-anything-2" in name:
+            return 1
+        return 2
+
+    return sorted(candidates, key=_score)
+
+
+def _has_sam2_build() -> bool:
+    try:
+        return importlib.util.find_spec("sam2.build_sam") is not None
+    except Exception:
+        return False
+
+
+def _ensure_sam2_importable() -> bool:
+    if _has_sam2_build():
+        return True
+
+    for candidate in _discover_local_sam2_roots():
+        if str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+        if _has_sam2_build():
+            logger.info("Loaded SAM2 package from local source tree: %s", candidate)
+            return True
+    return False
+
+
 class SAM2Encoder(nn.Module):
     """
     Wraps the SAM2.1 Hiera image encoder for multi-scale feature extraction.
 
     Produces a dict of feature maps at 4 scales:
-        feat_s4  → stride 4  (H/4 × W/4)
-        feat_s8  → stride 8  (H/8 × W/8)
-        feat_s16 → stride 16 (H/16 × W/16)
-        feat_s32 → stride 32 (H/32 × W/32)
+        feat_s4  -> stride 4  (H/4 x W/4)
+        feat_s8  -> stride 8  (H/8 x W/8)
+        feat_s16 -> stride 16 (H/16 x W/16)
+        feat_s32 -> stride 32 (H/32 x W/32)
 
     Args:
         checkpoint_path: path to SAM2 .pt checkpoint
@@ -58,11 +122,14 @@ class SAM2Encoder(nn.Module):
     def _build_encoder(self) -> Tuple[nn.Module, Dict[str, int]]:
         """Load SAM2 and extract the image encoder trunk."""
         try:
+            if not _ensure_sam2_importable():
+                raise ImportError("sam2 package is unavailable")
+
             from sam2.build_sam import build_sam2
 
             ckpt = self.checkpoint_path
             if ckpt and Path(ckpt).exists():
-                logger.info(f"Loading SAM2 from checkpoint: {ckpt}")
+                logger.info("Loading SAM2 from checkpoint: %s", ckpt)
                 sam2_model = build_sam2(
                     self.model_cfg,
                     ckpt,
@@ -86,7 +153,8 @@ class SAM2Encoder(nn.Module):
 
         except ImportError:
             logger.warning(
-                "sam2 package not installed. Using ResNet50 fallback backbone."
+                "SAM2 package not available (pip/local source not found). "
+                "Using ResNet50 fallback backbone."
             )
             return self._resnet_fallback()
 
@@ -98,9 +166,9 @@ class SAM2Encoder(nn.Module):
             try:
                 out = encoder(dummy)
                 feats = self._extract_features(out)
-                return {k: v.shape[1] for k, v in feats.items()}
+                return {key: val.shape[1] for key, val in feats.items()}
             except Exception as e:
-                logger.warning(f"Channel inference failed: {e}. " "Using defaults.")
+                logger.warning("Channel inference failed: %s. Using defaults.", e)
                 return {
                     "feat_s4": 256,
                     "feat_s8": 256,
@@ -111,8 +179,8 @@ class SAM2Encoder(nn.Module):
     def _extract_features(self, out) -> Dict[str, torch.Tensor]:
         """Parse SAM2 encoder output into named feature maps."""
         # Handle already-formatted dicts (e.g. from fallback)
-        if isinstance(out, dict) and any(k.startswith("feat_s") for k in out.keys()):
-            return {k: v.contiguous() for k, v in out.items()}
+        if isinstance(out, dict) and any(key.startswith("feat_s") for key in out.keys()):
+            return {key: val.contiguous() for key, val in out.items()}
 
         if isinstance(out, dict) and "backbone_fpn" in out:
             # SAM2 returns:
@@ -129,20 +197,22 @@ class SAM2Encoder(nn.Module):
             s32 = F.avg_pool2d(s16, 2, stride=2)
             result["feat_s32"] = s32
             return result
-        elif isinstance(out, dict):
+
+        if isinstance(out, dict):
             result = {}
-            for i, (k, v) in enumerate(out.items()):
-                if isinstance(v, torch.Tensor):
-                    result[f"feat_s{4*(2**i)}"] = v.contiguous()
+            for i, (_, val) in enumerate(out.items()):
+                if isinstance(val, torch.Tensor):
+                    result[f"feat_s{4*(2**i)}"] = val.contiguous()
             return result
-        elif isinstance(out, (list, tuple)):
+
+        if isinstance(out, (list, tuple)):
             result = {}
             for i, feat in enumerate(out):
                 if isinstance(feat, torch.Tensor):
                     result[f"feat_s{4*(2**i)}"] = feat.contiguous()
             return result
-        else:
-            return {"feat_s16": out.contiguous()}
+
+        return {"feat_s16": out.contiguous()}
 
     def _resnet_fallback(self) -> Tuple[nn.Module, Dict[str, int]]:
         """Fallback to ResNet50 if SAM2 is not available."""
@@ -151,16 +221,16 @@ class SAM2Encoder(nn.Module):
         resnet = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
 
         class ResNetEncoder(nn.Module):
-            def __init__(self, resnet):
+            def __init__(self, resnet_model):
                 super().__init__()
-                self.conv1 = resnet.conv1
-                self.bn1 = resnet.bn1
-                self.relu = resnet.relu
-                self.maxpool = resnet.maxpool
-                self.layer1 = resnet.layer1
-                self.layer2 = resnet.layer2
-                self.layer3 = resnet.layer3
-                self.layer4 = resnet.layer4
+                self.conv1 = resnet_model.conv1
+                self.bn1 = resnet_model.bn1
+                self.relu = resnet_model.relu
+                self.maxpool = resnet_model.maxpool
+                self.layer1 = resnet_model.layer1
+                self.layer2 = resnet_model.layer2
+                self.layer3 = resnet_model.layer3
+                self.layer4 = resnet_model.layer4
 
             def forward(self, x):
                 x = self.relu(self.bn1(self.conv1(x)))
