@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+
 
 @dataclass
 class TrainingConfig:
@@ -23,7 +25,7 @@ class TrainingConfig:
     num_roof_classes: int = 5
     dropout: float = 0.1
     sam2_checkpoint: Optional[Path] = Path("checkpoints/sam2.1_hiera_base_plus.pt")
-    sam2_model_cfg: str = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+    sam2_model_cfg: str = DEFAULT_SAM2_MODEL_CFG
 
     # ── Training ─────────────────────────────────────────────────────────────
     batch_size: int = 8
@@ -42,7 +44,7 @@ class TrainingConfig:
 
     # ── Data ─────────────────────────────────────────────────────────────────
     tile_size: int = 512
-    tile_overlap: int = 64
+    tile_overlap: int = 96
     split_mode: str = "map"  # map | tile
     num_workers: int = 4
     pin_memory: bool = True

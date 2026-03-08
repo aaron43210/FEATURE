@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .sam2_encoder import SAM2Encoder
+from .sam2_encoder import DEFAULT_SAM2_MODEL_CFG, SAM2Encoder
 from .decoder import FPNDecoder
 from .heads import create_all_heads
 
@@ -47,7 +47,7 @@ class EnsembleSvamitvaModel(nn.Module):
         num_roof_classes: int = 5,
         pretrained: bool = True,
         checkpoint_path: str = "",
-        model_cfg: str = "configs/sam2.1/sam2.1_hiera_b+.yaml",
+        model_cfg: str = DEFAULT_SAM2_MODEL_CFG,
         dropout: float = 0.1,
     ):
         super().__init__()

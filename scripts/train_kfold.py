@@ -9,9 +9,14 @@ import argparse
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 from statistics import mean, pstdev
 from typing import Dict, List
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from data.dataset import create_kfold_dataloaders
 from models.losses import MultiTaskLoss

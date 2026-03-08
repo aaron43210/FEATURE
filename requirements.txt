@@ -23,3 +23,4 @@ skan
 segmentation-models-pytorch
 ultralytics
 timm
+optuna

@@ -10,9 +10,16 @@ Usage:
 import argparse
 import logging
 import re
+import sys
 from pathlib import Path
 
 import torch
+
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
 
 # Setup logging
 logging.basicConfig(
@@ -80,7 +87,7 @@ def parse_args():
     )
     p.add_argument(
         "--sam2_model_cfg",
-        default="configs/sam2.1/sam2.1_hiera_b+.yaml",
+        default=DEFAULT_SAM2_MODEL_CFG,
         help="SAM2 model config path/name",
     )
 

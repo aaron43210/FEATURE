@@ -12,10 +12,18 @@ This script is aligned with the current project APIs:
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import optuna
+try:
+    import optuna
+except ImportError:  # pragma: no cover - optional dependency guard
+    optuna = None  # type: ignore[assignment]
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from data.dataset import create_dataloaders
 from models.losses import MultiTaskLoss
@@ -106,7 +114,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _suggest_hparams(trial: optuna.trial.Trial) -> Dict[str, Any]:
+def _suggest_hparams(trial: Any) -> Dict[str, Any]:
     """Sample trial hyperparameters using modern Optuna APIs."""
     return {
         "learning_rate": trial.suggest_float("learning_rate", 1e-5, 1e-3, log=True),
@@ -119,7 +127,7 @@ def _suggest_hparams(trial: optuna.trial.Trial) -> Dict[str, Any]:
 
 
 def _build_config(
-    args: argparse.Namespace, trial: optuna.trial.Trial, hparams: Dict[str, Any]
+    args: argparse.Namespace, trial: Any, hparams: Dict[str, Any]
 ) -> TrainingConfig:
     train_dirs = [Path(d) for d in args.train_dirs]
     val_dir: Optional[Path] = Path(args.val_dir) if args.val_dir else None
@@ -153,7 +161,7 @@ def _build_config(
     )
 
 
-def objective(trial: optuna.trial.Trial, args: argparse.Namespace) -> float:
+def objective(trial: Any, args: argparse.Namespace) -> float:
     """Build data/model/trainer stack for a trial and return best validation score."""
     hparams = _suggest_hparams(trial)
     config = _build_config(args, trial, hparams)
@@ -194,6 +202,12 @@ def objective(trial: optuna.trial.Trial, args: argparse.Namespace) -> float:
 
 def main() -> None:
     args = parse_args()
+    if optuna is None:
+        raise ImportError(
+            "optuna is required for hyperparameter search. "
+            "Install it with: pip install optuna"
+        )
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     study = optuna.create_study(

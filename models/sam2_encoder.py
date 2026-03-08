@@ -16,6 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
+DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
 
 # Default SAM2.1 checkpoint URL
 SAM2_CHECKPOINT_URL = (
@@ -86,6 +87,28 @@ def _ensure_sam2_importable() -> bool:
     return False
 
 
+def _resolve_model_cfg_path(model_cfg: str) -> str:
+    """
+    Resolve a SAM2 config reference.
+
+    Accepts:
+    - Existing file paths
+    - Relative paths inside discovered local sam2 source trees
+    - Config names installed with the sam2 package (for example sam2.1_hiera_b+.yaml)
+    """
+    cfg_path = Path(model_cfg)
+    if cfg_path.exists():
+        return str(cfg_path)
+
+    for root in _discover_local_sam2_roots():
+        local_cfg = root / model_cfg
+        if local_cfg.exists():
+            logger.info("Resolved SAM2 config from local source: %s", local_cfg)
+            return str(local_cfg)
+
+    return model_cfg
+
+
 class SAM2Encoder(nn.Module):
     """
     Wraps the SAM2.1 Hiera image encoder for multi-scale feature extraction.
@@ -105,7 +128,7 @@ class SAM2Encoder(nn.Module):
     def __init__(
         self,
         checkpoint_path: str = "",
-        model_cfg: str = "configs/sam2.1/sam2.1_hiera_b+.yaml",
+        model_cfg: str = DEFAULT_SAM2_MODEL_CFG,
         freeze: bool = False,
     ):
         super().__init__()
@@ -127,18 +150,19 @@ class SAM2Encoder(nn.Module):
 
             from sam2.build_sam import build_sam2
 
+            resolved_model_cfg = _resolve_model_cfg_path(self.model_cfg)
             ckpt = self.checkpoint_path
             if ckpt and Path(ckpt).exists():
                 logger.info("Loading SAM2 from checkpoint: %s", ckpt)
                 sam2_model = build_sam2(
-                    self.model_cfg,
+                    resolved_model_cfg,
                     ckpt,
                     device="cpu",
                 )
             else:
                 logger.info("Building SAM2 without checkpoint (random init)")
                 sam2_model = build_sam2(
-                    self.model_cfg,
+                    resolved_model_cfg,
                     ckpt_path=None,
                     device="cpu",
                 )
