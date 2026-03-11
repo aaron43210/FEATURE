@@ -18,6 +18,7 @@ class TrainingConfig:
     val_dir: Optional[Path] = None
     checkpoint_dir: Path = Path("checkpoints")
     log_dir: Path = Path("logs")
+    project_root: Path = field(default_factory=lambda: Path.cwd())
 
     # ── Model ────────────────────────────────────────────────────────────────
     backbone: str = "ensemble"

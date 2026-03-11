@@ -137,7 +137,7 @@ def main():
         tile_size = st.select_slider(
             "Inference Tile Size",
             options=[512, 768, 1024, 1280, 1536],
-            value=1024,
+            value=512,
         )
         overlap = st.slider("Tile Overlap", 64, 384, 192, step=32)
         alpha = st.slider("Visual Opacity", 0.1, 0.9, 0.5)
