@@ -119,6 +119,17 @@ def main():
     ]
     run_step(yolo_train_cmd, "YOLO Training")
 
+    # Final Consolidation: Move weights to 'check/' for app.py
+    check_dir = project_root / "check"
+    check_dir.mkdir(exist_ok=True)
+    
+    # Try to find and copy the best YOLO weights
+    yolo_best = project_root / "checkpoints" / "yolo_runs" / "train" / "weights" / "best.pt"
+    if yolo_best.exists():
+        import shutil
+        shutil.copy(yolo_best, check_dir / "yolo_svamitva_best.pt")
+        logger.info(f"📍 Unified YOLO weights copied to {check_dir / 'yolo_svamitva_best.pt'}")
+
     logger.info("\n" + "=" * 60)
     logger.info("🏆 ALL MODELS TRAINED SUCCESSFULLY! 🏆")
     logger.info("  1. Segmentation: checkpoints/ensemble_v3_final/best.pt")

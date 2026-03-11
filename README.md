@@ -23,6 +23,8 @@ This repository contains a state-of-the-art AI solution developed for **Problem 
 ### 1. Foundation Model Backbone
 We utilize **SAM-2 (Segment Anything Model 2)** with the `hiera_tiny` configuration as our core feature extractor. This provides a robust, zero-shot capable understanding of object boundaries in complex aerial imagery.
 
+For a detailed breakdown of the model design, see [architecture.md](architecture.md).
+
 ### 2. Multi-Head FPN Decoder
 Our custom **Feature Pyramid Network (FPN)** fuses multi-scale features from the encoder to handle objects of varying sizes (from huge buildings to tiny wells).
 - **Segmentation Heads**: Binary masks for Buildings, Roads, and Waterbodies.
