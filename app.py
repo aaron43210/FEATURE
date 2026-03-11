@@ -124,8 +124,8 @@ def main():
         yolo_conf = st.slider("YOLO Confidence", 0.05, 0.95, 0.25)
         yolo_iou = st.slider("YOLO NMS IoU", 0.10, 0.90, 0.45)
         use_tta = st.checkbox(
-    "Enable TTA (higher quality, slower)",
-     value=False)
+            "Enable TTA (higher quality, slower)", value=False
+        )
         tile_size = st.select_slider(
             "Inference Tile Size",
             options=[512, 768, 1024, 1280, 1536],
@@ -204,8 +204,10 @@ def main():
                                 for p in Path(out_dir).glob("*.gpkg"):
                                     zf.write(p, p.name)
                             st.download_button(
-                                "📩 Download ZIP", zip_buf.getvalue(),
-                                "results.zip")
+                                "📩 Download ZIP",
+                                zip_buf.getvalue(),
+                                "results.zip"
+                            )
                 else:
                     st.info(
                         "📦 GIS Export disabled for non-geospatial image formats.")
@@ -261,8 +263,8 @@ def main():
                         )
                         for c in range(3):
                             overlay[binary, c] = (
-                                overlay[binary, c] * \
-                                    (1 - alpha) + color[c] * alpha
+                                overlay[binary, c] * (1 - alpha) +
+                                color[c] * alpha
                             )
                 st.image(overlay.astype(np.uint8), width="stretch")
 
@@ -302,13 +304,9 @@ def main():
                             import matplotlib.pyplot as plt
 
                             cmap = plt.get_cmap("tab10")
-                            c_map = (
-    cmap(m_disp)[
-        :,
-        :,
-        :3] *
-        255).astype(
-            np.uint8)
+                            c_map = (cmap(m_disp)[:, :, :3] * 255).astype(
+                                np.uint8
+                            )
                             c_map[m_disp == 0] = 0
                             st.image(c_map, caption=f"{f_name} Map")
                         else:
@@ -317,9 +315,9 @@ def main():
                             for i in range(3):
                                 c_mask[binary, i] = f_color[i]
                             st.image(
-    c_mask.astype(
-        np.uint8),
-         caption=f"{f_name} Mask")
+                                c_mask.astype(np.uint8),
+                                caption=f"{f_name} Mask"
+                            )
 
                     st.divider()
                     st.write(f"**{f_name} Combined Overlay**")
@@ -331,21 +329,17 @@ def main():
 
                         cmap = plt.get_cmap("tab10")
                         c_roof = (
-    cmap(m_disp)[
-        :,
-        :,
-        :3] *
-        255).astype(
-            np.uint8)
+                            cmap(m_disp)[:, :, :3] * 255
+                        ).astype(np.uint8)
                         f_ovl[bin_mask] = (
-                            f_ovl[bin_mask] * (1 - alpha) + \
-                                               c_roof[bin_mask] * alpha
+                            f_ovl[bin_mask] * (1 - alpha) +
+                            c_roof[bin_mask] * alpha
                         )
                     else:
                         for i in range(3):
                             f_ovl[bin_mask, i] = (
-                                f_ovl[bin_mask, i] * \
-                                    (1 - alpha) + f_color[i] * alpha
+                                f_ovl[bin_mask, i] * (1 - alpha) +
+                                f_color[i] * alpha
                             )
                     st.image(f_ovl.astype(np.uint8), width="stretch")
 

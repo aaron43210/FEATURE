@@ -218,8 +218,9 @@ class ShapefileAnnotationParser:
         if target_crs is not None and gdf.crs is not None:
             if str(gdf.crs).upper() != str(target_crs).upper():
                 logger.info(
-    f"  Reprojecting {feature_type}: {
-        gdf.crs} → {target_crs}")
+                    "  Reprojecting %s: %s → %s",
+                    feature_type, gdf.crs, target_crs
+                )
                 gdf = gdf.to_crs(target_crs)
 
         # Estimate pixel size from affine transform (metres per pixel)
@@ -228,15 +229,11 @@ class ShapefileAnnotationParser:
 
         # Buffer lines and points so they produce visible pixel masks
         if feature_type in self.LINE_TASKS:
-            buffer_m = max(
-    pixel_size * 4,
-     self.LINE_BUFFER_M)  # wider receptive field
+            buffer_m = max(pixel_size * 4, self.LINE_BUFFER_M)
             gdf = gdf.copy()
             gdf["geometry"] = gdf.geometry.buffer(buffer_m)
         elif feature_type in self.POINT_TASKS:
-            buffer_m = max(
-    pixel_size * 5,
-     self.POINT_BUFFER_M)  # more visible points
+            buffer_m = max(pixel_size * 5, self.POINT_BUFFER_M)
             gdf = gdf.copy()
             gdf["geometry"] = gdf.geometry.buffer(buffer_m)
 
@@ -264,7 +261,8 @@ class ShapefileAnnotationParser:
         if n_pos == 0:
             # Many tiles legitimately contain no features — keep at DEBUG
             logger.debug(
-    f"  [{feature_type}] tile has no features (all-zero mask)")
+                "  [%s] tile has no features (all-zero mask)", feature_type
+            )
             return mask
         else:
             logger.debug(f"  [{feature_type}] mask positive pixels: {n_pos}")
@@ -378,7 +376,8 @@ class ShapefileAnnotationParser:
             invalid = (~gdf.geometry.is_valid).sum()
             if invalid:
                 logger.warning(
-    f"{invalid} invalid geometries in {shapefile_path}")
+                    "%d invalid geometries in %s", invalid, shapefile_path
+                )
                 return False
             return True
         except Exception as e:

@@ -72,7 +72,7 @@ class EnsembleSvamitvaModel(nn.Module):
         )
 
     def _resolve_sam2_checkpoint(
-        self, checkpoint_path: str, pretrained: bool) -> str:
+            self, checkpoint_path: str, pretrained: bool) -> str:
         """Resolve which SAM2 checkpoint should initialize the encoder."""
         if checkpoint_path:
             p = Path(checkpoint_path)
@@ -186,7 +186,7 @@ class EnsembleSvamitvaModel(nn.Module):
 
         # Utilities
         if run_all or task_norm in {
-            "utilities", "utility", "utility_line_mask"}:
+                "utilities", "utility", "utility_line_mask"}:
             outputs["utility_line_mask"] = F.interpolate(
                 self.heads["utility_line"](fused_feat),
                 size=target_size,
@@ -235,8 +235,9 @@ class EnsembleSvamitvaModel(nn.Module):
     def get_param_groups(self, base_lr: float = 1e-4) -> list:
         """Categorize parameters for LR scaling."""
         backbone_params = list(self.encoder.parameters())
-        head_params = list(self.decoder.parameters()) + \
-                           list(self.heads.parameters())
+        head_params = (
+            list(self.decoder.parameters()) + list(self.heads.parameters())
+        )
 
         return [
             {"params": head_params, "lr": base_lr},

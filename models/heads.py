@@ -112,33 +112,17 @@ class DLinkBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.d1 = nn.Conv2d(
-    in_ch,
-    out_ch,
-    3,
-    padding=1,
-    dilation=1,
-     bias=False)
+            in_ch, out_ch, 3, padding=1, dilation=1, bias=False
+        )
         self.d2 = nn.Conv2d(
-    in_ch,
-    out_ch,
-    3,
-    padding=2,
-    dilation=2,
-     bias=False)
+            in_ch, out_ch, 3, padding=2, dilation=2, bias=False
+        )
         self.d4 = nn.Conv2d(
-    in_ch,
-    out_ch,
-    3,
-    padding=4,
-    dilation=4,
-     bias=False)
+            in_ch, out_ch, 3, padding=4, dilation=4, bias=False
+        )
         self.d8 = nn.Conv2d(
-    in_ch,
-    out_ch,
-    3,
-    padding=8,
-    dilation=8,
-     bias=False)
+            in_ch, out_ch, 3, padding=8, dilation=8, bias=False
+        )
         self.fuse = nn.Sequential(
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
@@ -265,7 +249,8 @@ def create_all_heads(
 
     # Building (dual output)
     heads["building"] = BuildingHead(
-    in_channels, 128, num_roof_classes, dropout)
+        in_channels, 128, num_roof_classes, dropout
+    )
 
     # Polygon heads
     heads["road"] = BinaryHead(in_channels, 64, dropout)

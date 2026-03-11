@@ -59,7 +59,10 @@ SHAPEFILE_TASKS = [
         "road_centerline",
     ),
     (
-        ["Waterbody_1*.shp", "Water_Body.shp", "Waterbody.shp", "Water_Body_1.shp"],
+        [
+            "Waterbody_1*.shp", "Water_Body.shp", "Waterbody.shp",
+            "Water_Body_1.shp"
+        ],
         ["^waterbody$", "^waterbody_1$", "^water_body$", "pond", "lake"],
         "waterbody",
     ),
@@ -349,7 +352,7 @@ class SvamitvaDataset(Dataset):
                 )
             except Exception as e:
                 logger.warning(
-                    f"K-Means clustering failed, falling back to full map: {e}"
+                    "K-Means clustering failed, fallback to full map: %s", e
                 )
                 valid_mask_thumb = None
 
@@ -435,7 +438,8 @@ class SvamitvaDataset(Dataset):
                         )
                     else:
                         logger.warning(
-                            f"[{map_dir.name}] No shapefile for '{task_key}'"
+                            "[%s] No shapefile for '%s'",
+                            map_dir.name, task_key
                         )
 
             if not annotations:
@@ -443,7 +447,8 @@ class SvamitvaDataset(Dataset):
                 continue
 
             logger.info(
-                f"[{map_dir.name}] {ortho.name} | tasks: {', '.join(annotations.keys())}"
+                "[%s] %s | tasks: %s",
+                map_dir.name, ortho.name, ", ".join(annotations.keys())
             )
 
             # ── Compute tiles ────────────────────────────────────────────────
@@ -470,7 +475,8 @@ class SvamitvaDataset(Dataset):
                     }
                 )
             logger.info(
-                f"  → {len(samples) - n_before} tiles from {map_dir.name} ({H}×{W}px)"
+                "  → %d tiles from %s (%d×%dpx)",
+                len(samples) - n_before, map_dir.name, H, W
             )
 
         if not samples:
@@ -618,12 +624,12 @@ class SvamitvaDataset(Dataset):
             )
             # 0.5% of a 512x512 tile is ~1300 pixels
             min_required = int(self.image_size * self.image_size * 0.005)
-            
+
             if total_positive < min_required and len(self.samples) > 1:
                 new_idx = np.random.randint(0, len(self.samples))
                 return self._load_tile(new_idx, retries=retries + 1)
 
-        if self.transform:
+        if self.transform is not None:
             transformed = self.transform(image=image, **masks)
             result: Dict[str, Any] = {"image": transformed["image"]}
             for k in masks:
@@ -726,7 +732,8 @@ def create_dataloaders(
                 split_mode_norm = "tile"
             else:
                 logger.info(
-                    "Auto-split (map-wise): %d train / %d val tiles | val maps: %s",
+                    "Auto-split (map-wise): %d train / %d val tiles | "
+                    "val maps: %s",
                     len(train_idx),
                     len(val_idx),
                     ", ".join(val_maps),
@@ -777,7 +784,9 @@ def create_dataloaders(
     train_sampler = None
     val_sampler = None
     if distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(tr_ds_final)
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+            tr_ds_final
+        )
         val_sampler = torch.utils.data.distributed.DistributedSampler(
             val_ds_final, shuffle=False
         )

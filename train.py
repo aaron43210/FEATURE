@@ -28,7 +28,7 @@ logger = logging.getLogger("unified_train")
 
 def parse_args():
     p = argparse.ArgumentParser(description="Unified Training for SVAMITVA Hackathon")
-    
+
     # Shared Data Path
     p.add_argument("--train_dirs", nargs="+", default=["data/MAP1"], 
                    help="Directories containing MAP*.tif + shapefiles")
@@ -41,20 +41,22 @@ def parse_args():
     # Optimization
     p.add_argument("--cache_features", action="store_true", help="Enable SAM2 feature caching")
     p.add_argument("--multi_gpu", action="store_true", default=True, help="Use 8x GPUs if available")
-    
+
     return p.parse_args()
+
 
 def run_step(cmd: List[str], step_name: str):
     logger.info(f"▶️ Starting Step: {step_name}")
     start_time = time.time()
     try:
         # We use check=True to raise an error if the step fails
-        result = subprocess.run(cmd, check=True, capture_output=False)
+        subprocess.run(cmd, check=True, capture_output=False)
         elapsed = (time.time() - start_time) / 60
         logger.info(f"✅ Step '{step_name}' completed in {elapsed:.2f} mins")
     except subprocess.CalledProcessError as e:
         logger.error(f"❌ Step '{step_name}' failed with error: {e}")
         sys.exit(1)
+
 
 def main():
     args = parse_args()

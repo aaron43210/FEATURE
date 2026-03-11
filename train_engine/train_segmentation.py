@@ -39,9 +39,10 @@ def parse_args():
         help="Directories containing MAP*.tif + shapefiles",
     )
     p.add_argument(
-    "--val_dir",
-    default=None,
-     help="Separate validation directory")
+        "--val_dir",
+        default=None,
+        help="Separate validation directory"
+    )
     p.add_argument("--val_split", type=float, default=0.2)
     p.add_argument("--split_mode", default="map", choices=["map", "tile"])
 
@@ -67,9 +68,10 @@ def parse_args():
 
     # DGX Specifics
     p.add_argument(
-    "--checkpoint_dir",
-    default="check",
-     help="Requested 'check' dir")
+        "--checkpoint_dir",
+        default="check",
+        help="Requested 'check' dir"
+    )
     p.add_argument("--name", default="dgx_ensemble_v3", help="Experiment name")
     p.add_argument(
         "--multi_gpu",
@@ -78,13 +80,15 @@ def parse_args():
         help="Use DataParallel on all GPUs",
     )
     p.add_argument(
-    "--cache_features",
-    action="store_true",
-     help="Cache frozen SAM2 backbone disk features to drastically speed up early epochs.")
+        "--cache_features",
+        action="store_true",
+        help="Cache frozen SAM2 backbone disk features to drastically speed up early epochs."
+    )
     p.add_argument(
-    "--quick_test",
-    action="store_true",
-     help="3-epoch smoke test")
+        "--quick_test",
+        action="store_true",
+        help="3-epoch smoke test"
+    )
 
     return p.parse_args()
 
