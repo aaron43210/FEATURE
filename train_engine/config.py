@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_tiny.yaml"
 
 
 @dataclass
@@ -24,7 +24,9 @@ class TrainingConfig:
     pretrained: bool = True
     num_roof_classes: int = 5
     dropout: float = 0.1
-    sam2_checkpoint: Optional[Path] = Path("checkpoints/sam2.1_hiera_base_plus.pt")
+    sam2_checkpoint: Optional[Path] = Path(
+        "checkpoints/sam2.1_hiera_tiny.pt"
+    )
     sam2_model_cfg: str = DEFAULT_SAM2_MODEL_CFG
 
     # ── Training ─────────────────────────────────────────────────────────────
@@ -41,6 +43,9 @@ class TrainingConfig:
     freeze_backbone_epochs: int = 5
     seed: int = 42
     force_cpu: bool = False
+
+    # ── Feature Caching ──
+    cache_features: bool = False
 
     # ── Data ─────────────────────────────────────────────────────────────────
     tile_size: int = 512
@@ -85,7 +90,8 @@ class TrainingConfig:
         # Ensure Paths are correctly typed
         if isinstance(self.train_dirs, list):
             self.train_dirs = [
-                Path(d) if not isinstance(d, Path) else d for d in self.train_dirs
+                Path(d) if not isinstance(d, Path)
+                else d for d in self.train_dirs
             ]
         if self.val_dir and not isinstance(self.val_dir, Path):
             self.val_dir = Path(self.val_dir)

@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ── CBAM Attention ────────────────────────────────────────────────────────────
+# ── CBAM Attention ──────────────────────────────────────────────────────
 
 
 class ChannelAttention(nn.Module):
@@ -54,7 +54,8 @@ class SpatialAttention(nn.Module):
 class CBAM(nn.Module):
     """Convolutional Block Attention Module (Channel + Spatial)."""
 
-    def __init__(self, channels: int, reduction: int = 16, kernel_size: int = 7):
+    def __init__(self, channels: int, reduction: int = 16,
+                 kernel_size: int = 7):
         super().__init__()
         self.channel = ChannelAttention(channels, reduction)
         self.spatial = SpatialAttention(kernel_size)
@@ -65,7 +66,7 @@ class CBAM(nn.Module):
         return x
 
 
-# ── FPN Decoder ───────────────────────────────────────────────────────────────
+# ── FPN Decoder ─────────────────────────────────────────────────────────
 
 
 class FPNDecoder(nn.Module):
@@ -90,7 +91,8 @@ class FPNDecoder(nn.Module):
         super().__init__()
         self.out_channels = out_channels
 
-        # Lateral 1×1 convolutions (project each backbone level to out_channels)
+        # Lateral 1×1 convolutions (project each backbone level to
+        # out_channels)
         self.laterals = nn.ModuleDict()
         for name, ch in in_channels.items():
             self.laterals[name] = nn.Conv2d(ch, out_channels, 1)
@@ -99,7 +101,12 @@ class FPNDecoder(nn.Module):
         self.smoothing = nn.ModuleDict()
         for name in in_channels:
             self.smoothing[name] = nn.Sequential(
-                nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False),
+                nn.Conv2d(
+    out_channels,
+    out_channels,
+    3,
+    padding=1,
+     bias=False),
                 nn.BatchNorm2d(out_channels),
                 nn.ReLU(inplace=True),
             )
@@ -125,7 +132,8 @@ class FPNDecoder(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                nn.init.kaiming_normal_(
+    m.weight, mode="fan_out", nonlinearity="relu")
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d):
@@ -142,7 +150,9 @@ class FPNDecoder(nn.Module):
         """
         # Sort by spatial resolution (Coarsest to Finest)
         # s32 > s16 > s8 > s4
-        sorted_keys = sorted(features.keys(), key=lambda k: features[k].shape[2])
+        sorted_keys = sorted(
+    features.keys(),
+     key=lambda k: features[k].shape[2])
 
         # Build lateral projections
         laterals = {}
@@ -166,8 +176,8 @@ class FPNDecoder(nn.Module):
             if prev is not None:
                 # Upsample previous coarser level and add
                 prev_up = F.interpolate(
-                    prev, size=lat.shape[2:], mode="bilinear", align_corners=False
-                )
+                    prev, size=lat.shape[2:],
+                    mode="bilinear", align_corners=False)
                 lat = lat + prev_up
             lat = self.smoothing[name](lat)
             lat = self.attention[name](lat)
@@ -175,7 +185,8 @@ class FPNDecoder(nn.Module):
             prev = lat
 
         # Upsample all levels to finest resolution and concatenate
-        target_size = max(processed.values(), key=lambda t: t.shape[2]).shape[2:]
+        target_size = max(processed.values(),
+     key=lambda t: t.shape[2]).shape[2:]
 
         upsampled = []
         # Join in original order for consistent cat
@@ -185,15 +196,15 @@ class FPNDecoder(nn.Module):
             feat = processed[name]
             if feat.shape[2:] != target_size:
                 feat = F.interpolate(
-                    feat, size=target_size, mode="bilinear", align_corners=False
-                )
+                    feat, size=target_size, mode="bilinear",
+                    align_corners=False)
             upsampled.append(feat)
 
         fused = torch.cat(upsampled, dim=1)
         return self.fuse(fused)
 
 
-# ── Task-Group Refinement ─────────────────────────────────────────────────────
+# ── Task-Group Refinement ───────────────────────────────────────────────
 
 
 class TaskGroupRefinement(nn.Module):
@@ -257,7 +268,8 @@ class SparseRefinement(nn.Module):
             ConvBNReLU(channels, channels),
             ConvBNReLU(channels, channels),
         )
-        self.spatial = SpatialAttention(kernel_size=11)  # Larger window for context
+        self.spatial = SpatialAttention(
+    kernel_size=11)  # Larger window for context
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.refine(x)

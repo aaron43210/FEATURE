@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_tiny.yaml"
 
 # Setup logging
 logging.basicConfig(
@@ -98,6 +98,12 @@ def parse_args():
     p.add_argument("--force_cpu", action="store_true")
     p.add_argument("--quick_test", action="store_true", help="3-epoch smoke test")
 
+    p.add_argument(
+        "--cache_features",
+        action="store_true",
+        help="Cache SAM2 backbone features to disk",
+    )
+
     return p.parse_args()
 
 
@@ -144,6 +150,7 @@ def main():
             dropout=args.dropout,
             sam2_checkpoint=args.sam2_checkpoint,
             sam2_model_cfg=args.sam2_model_cfg,
+            cache_features=args.cache_features,
         )
 
     # Data

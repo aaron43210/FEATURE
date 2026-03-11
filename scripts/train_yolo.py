@@ -117,7 +117,10 @@ def main():
     try:
         from ultralytics import YOLO
     except ImportError:
-        logger.error("Ultralytics not installed. Run:\n" "  pip install ultralytics")
+        logger.error(
+            "Ultralytics not installed. Run:\n"
+            "  pip install ultralytics"
+        )
         sys.exit(1)
 
     # Select device
@@ -142,16 +145,16 @@ def main():
     model = YOLO(model_path)
 
     # Train
-    logger.info(f"\n{'='*50}")
-    logger.info(f"Starting YOLO Training")
+    logger.info(f"\n{'=' *50}")
+    logger.info("Starting YOLO Training")
     logger.info(f"  Dataset: {args.data}")
     logger.info(f"  Epochs:  {args.epochs}")
     logger.info(f"  ImgSize: {args.imgsz}")
     logger.info(f"  Batch:   {args.batch}")
     logger.info(f"  Device:  {device}")
-    logger.info(f"{'='*50}\n")
+    logger.info(f"{'=' *50}\n")
 
-    results = model.train(
+    _ = model.train(
         data=str(data_path),
         epochs=args.epochs,
         imgsz=args.imgsz,

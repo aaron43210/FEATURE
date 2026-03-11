@@ -24,7 +24,6 @@ import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.windows import Window
-from shapely.geometry import box as shapely_box
 
 logging.basicConfig(
     level=logging.INFO,
@@ -241,7 +240,10 @@ def process_map_directory(
 
     for shp_path in waterbody_shps:
         gdf = gpd.read_file(shp_path)
-        logger.info(f"  Waterbody SHP: {shp_path.name}, " f"{len(gdf)} features")
+        logger.info(
+            "  Waterbody SHP: %s, %d features",
+            shp_path.name, len(gdf),
+        )
         for _, row in gdf.iterrows():
             geom = row.geometry
             if geom is None:
@@ -263,7 +265,7 @@ def process_map_directory(
     n_tiles = 0
     with rasterio.open(ortho_path) as src:
         img_h, img_w = src.height, src.width
-        transform = src.transform
+        _ = src.transform
         crs = src.crs
 
         # Reproject points to raster CRS if needed
@@ -319,7 +321,10 @@ def process_map_directory(
                         x_c = max(bw / 2, min(x_c, 1 - bw / 2))
                         y_c = max(bh / 2, min(y_c, 1 - bh / 2))
                         tile_labels.append(
-                            f"{cls_id} {x_c:.6f} " f"{y_c:.6f} {bw:.6f} {bh:.6f}"
+                            f"{cls_id} {x_c:.6f}"
+                            f" {y_c:.6f}"
+                            f" {bw:.6f}"
+                            f" {bh:.6f}"
                         )
 
                 # Only save tiles that have annotations
@@ -338,9 +343,8 @@ def process_map_directory(
                 img_out = out_images / f"{tile_name}.png"
                 # Convert to uint8 RGB
                 if tile_data.dtype == np.uint16:
-                    tile_data = (tile_data.astype(np.float32) / 65535.0 * 255).astype(
-                        np.uint8
-                    )
+                    tile_data = (tile_data.astype(
+                        np.float32) / 65535.0 * 255).astype( np.uint8 )
                 elif tile_data.dtype != np.uint8:
                     tile_data = np.clip(tile_data, 0, 255).astype(np.uint8)
 
@@ -493,13 +497,13 @@ def main():
     with open(yaml_path, "w") as f:
         f.write(yaml_content)
 
-    logger.info(f"\n{'='*50}")
+    logger.info(f"\n{'=' *50}")
     logger.info(f"YOLO dataset ready at: {out.resolve()}")
     logger.info(f"  Train: {n_train} tiles")
     logger.info(f"  Val:   {n_val_final} tiles")
     logger.info(f"  Classes: {CLASS_NAMES}")
     logger.info(f"  Config: {yaml_path}")
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' *50}")
 
 
 if __name__ == "__main__":

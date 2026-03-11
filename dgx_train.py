@@ -9,11 +9,13 @@ import logging
 import sys
 from pathlib import Path
 
+import torch
+
 REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_tiny.yaml"
 
 # Setup logging
 logging.basicConfig(
@@ -36,7 +38,10 @@ def parse_args():
         default=["data/MAP1"],
         help="Directories containing MAP*.tif + shapefiles",
     )
-    p.add_argument("--val_dir", default=None, help="Separate validation directory")
+    p.add_argument(
+    "--val_dir",
+    default=None,
+     help="Separate validation directory")
     p.add_argument("--val_split", type=float, default=0.2)
     p.add_argument("--split_mode", default="map", choices=["map", "tile"])
 
@@ -61,7 +66,10 @@ def parse_args():
     )
 
     # DGX Specifics
-    p.add_argument("--checkpoint_dir", default="check", help="Requested 'check' dir")
+    p.add_argument(
+    "--checkpoint_dir",
+    default="check",
+     help="Requested 'check' dir")
     p.add_argument("--name", default="dgx_ensemble_v3", help="Experiment name")
     p.add_argument(
         "--multi_gpu",
@@ -69,7 +77,14 @@ def parse_args():
         default=True,
         help="Use DataParallel on all GPUs",
     )
-    p.add_argument("--quick_test", action="store_true", help="3-epoch smoke test")
+    p.add_argument(
+    "--cache_features",
+    action="store_true",
+     help="Cache frozen SAM2 backbone disk features to drastically speed up early epochs.")
+    p.add_argument(
+    "--quick_test",
+    action="store_true",
+     help="3-epoch smoke test")
 
     return p.parse_args()
 
@@ -112,11 +127,14 @@ def main():
             sam2_checkpoint=Path(args.sam2_checkpoint),
             mixed_precision=True,
             force_cpu=not torch.cuda.is_available(),
+            cache_features=args.cache_features,
         )
         # Handle multi_gpu flag override if requested
         if not args.multi_gpu:
             logger.info("⚠️ Multi-GPU disabled by flag. Using single GPU.")
-            config.force_cpu = False  # Just an example, we'd need a specific flag for single vs multi in TrainingConfig if we wanted more control
+            # Just an example, we'd need a specific flag for single vs multi in
+            # TrainingConfig if we wanted more control
+            config.force_cpu = False
 
     # Data (Preprocessing happens here: tiling, normalization, etc.)
     logger.info(f"Loading datasets with tile_size={config.tile_size}...")
@@ -143,7 +161,8 @@ def main():
     )
 
     # Train
-    # Note: Trainer now automatically selects the best GPU via updated get_device()
+    # Note: Trainer now automatically selects the best GPU via updated
+    # get_device()
     trainer = Trainer(model, train_loader, val_loader, loss_fn, config)
 
     logger.info("Starting training on optimized GPU...")

@@ -117,7 +117,8 @@ class ShapefileAnnotationParser:
 
     # ── Buffer sizes (in map units, computed from pixel size in rasterize) ────
     # These are overridden per-call when we know the pixel size.
-    LINE_BUFFER_M: float = 2.0  # ~2.0 m buffer for lines (wider = stronger signal)
+    # ~2.0 m buffer for lines (wider = stronger signal)
+    LINE_BUFFER_M: float = 2.0
     POINT_BUFFER_M: float = 3.0  # ~3.0 m buffer for points
 
     # Geometry types that need buffering
@@ -170,7 +171,7 @@ class ShapefileAnnotationParser:
         logger.info("ShapefileAnnotationParser initialised")
         self.roof_types = self.ROOF_TYPES
 
-    # ── Shapefile loading ──────────────────────────────────────────────────────
+    # ── Shapefile loading ───────────────────────────────────────────────────
 
     def load_shapefile(self, shapefile_path: Path) -> gpd.GeoDataFrame:
         logger.info(f"Loading: {shapefile_path}")
@@ -182,7 +183,7 @@ class ShapefileAnnotationParser:
             logger.error(f"Error loading {shapefile_path}: {e}")
             raise
 
-    # ── Rasterisation ──────────────────────────────────────────────────────────
+    # ── Rasterisation ───────────────────────────────────────────────────────
 
     def rasterize_annotations(
         self,
@@ -216,19 +217,26 @@ class ShapefileAnnotationParser:
         # ★ Reproject shapefile to match the raster CRS
         if target_crs is not None and gdf.crs is not None:
             if str(gdf.crs).upper() != str(target_crs).upper():
-                logger.info(f"  Reprojecting {feature_type}: {gdf.crs} → {target_crs}")
+                logger.info(
+    f"  Reprojecting {feature_type}: {
+        gdf.crs} → {target_crs}")
                 gdf = gdf.to_crs(target_crs)
 
         # Estimate pixel size from affine transform (metres per pixel)
-        pixel_size = abs(reference_transform.a) if reference_transform.a != 0 else 1.0
+        pixel_size = abs(
+    reference_transform.a) if reference_transform.a != 0 else 1.0
 
         # Buffer lines and points so they produce visible pixel masks
         if feature_type in self.LINE_TASKS:
-            buffer_m = max(pixel_size * 4, self.LINE_BUFFER_M)  # wider receptive field
+            buffer_m = max(
+    pixel_size * 4,
+     self.LINE_BUFFER_M)  # wider receptive field
             gdf = gdf.copy()
             gdf["geometry"] = gdf.geometry.buffer(buffer_m)
         elif feature_type in self.POINT_TASKS:
-            buffer_m = max(pixel_size * 5, self.POINT_BUFFER_M)  # more visible points
+            buffer_m = max(
+    pixel_size * 5,
+     self.POINT_BUFFER_M)  # more visible points
             gdf = gdf.copy()
             gdf["geometry"] = gdf.geometry.buffer(buffer_m)
 
@@ -255,7 +263,8 @@ class ShapefileAnnotationParser:
         n_pos = int(mask.sum())
         if n_pos == 0:
             # Many tiles legitimately contain no features — keep at DEBUG
-            logger.debug(f"  [{feature_type}] tile has no features (all-zero mask)")
+            logger.debug(
+    f"  [{feature_type}] tile has no features (all-zero mask)")
             return mask
         else:
             logger.debug(f"  [{feature_type}] mask positive pixels: {n_pos}")
@@ -292,7 +301,7 @@ class ShapefileAnnotationParser:
             logger.warning(f"KNN refinement failed: {e}")
             return mask
 
-    # ── Roof type mask ─────────────────────────────────────────────────────────
+    # ── Roof type mask ──────────────────────────────────────────────────────
 
     def extract_roof_types(
         self,
@@ -358,7 +367,7 @@ class ShapefileAnnotationParser:
             dtype=np.uint8,
         )
 
-    # ── Validation helper ──────────────────────────────────────────────────────
+    # ── Validation helper ───────────────────────────────────────────────────
 
     def validate_annotations(self, shapefile_path: Path) -> bool:
         try:
@@ -368,7 +377,8 @@ class ShapefileAnnotationParser:
                 return False
             invalid = (~gdf.geometry.is_valid).sum()
             if invalid:
-                logger.warning(f"{invalid} invalid geometries in {shapefile_path}")
+                logger.warning(
+    f"{invalid} invalid geometries in {shapefile_path}")
                 return False
             return True
         except Exception as e:
@@ -376,7 +386,7 @@ class ShapefileAnnotationParser:
             return False
 
 
-# ── Standalone utilities ───────────────────────────────────────────────────────
+# ── Standalone utilities ────────────────────────────────────────────────
 
 
 def check_crs_match(orthophoto_path: Path, shapefile_path: Path) -> bool:

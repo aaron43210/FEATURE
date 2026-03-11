@@ -37,7 +37,8 @@ def get_train_transforms(image_size: int = 512) -> A.Compose:
             A.HorizontalFlip(p=0.5),  # Horizontal flip
             A.VerticalFlip(p=0.5),  # Vertical flip
             A.Transpose(p=0.3),  # Transpose the image
-            # Random crop and resize — keep more of the tile to preserve features
+            # Random crop and resize — keep more of the tile to preserve
+            # features
             A.RandomResizedCrop(
                 size=(image_size, image_size),
                 scale=(0.85, 1.0),  # Crop between 85-100% (less aggressive)
@@ -46,7 +47,7 @@ def get_train_transforms(image_size: int = 512) -> A.Compose:
             ),
             # Fallback resize when RandomResizedCrop is skipped
             A.Resize(height=image_size, width=image_size, p=1.0),
-            # ── NOTE: ElasticTransform and Perspective REMOVED ────────────────
+            # ── NOTE: ElasticTransform and Perspective REMOVED ───────────────
             # They distort building corners and thin linear features, hurting
             # IoU on buildings, road centrelines, and utility lines.
             # Shift-Scale-Rotate is a safer geometric augmentation:
@@ -107,7 +108,8 @@ def get_train_transforms(image_size: int = 512) -> A.Compose:
             A.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
-                max_pixel_value=1.0,  # Our images are already normalized to [0, 1]
+                max_pixel_value=1.0,
+      # Our images are already normalized to [0, 1]
             ),
             # Convert to PyTorch tensor
             ToTensorV2(),

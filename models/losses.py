@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ── Dice Loss ─────────────────────────────────────────────────────────────────
+# ── Dice Loss ───────────────────────────────────────────────────────────
 
 
 class DiceLoss(nn.Module):
@@ -51,7 +51,7 @@ class DiceLoss(nn.Module):
         return 1.0 - dice
 
 
-# ── Focal Loss ────────────────────────────────────────────────────────────────
+# ── Focal Loss ──────────────────────────────────────────────────────────
 
 
 class BinaryFocalLoss(nn.Module):
@@ -119,7 +119,8 @@ class LovaszHingeLoss(nn.Module):
             # Only keep pixels where mask is 1
             valid_idx = mask > 0.5
             if not valid_idx.any():
-                return torch.tensor(0.0, device=logits.device, requires_grad=True)
+                return torch.tensor(
+                    0.0, device=logits.device, requires_grad=True)
             logits = logits[valid_idx]
             targets = targets[valid_idx]
 
@@ -181,14 +182,17 @@ class MultiClassDiceLoss(nn.Module):
         self.num_classes = num_classes
         self.smooth = smooth
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def forward(self, logits: torch.Tensor,
+                targets: torch.Tensor) -> torch.Tensor:
         """
         Args:
             logits: (B, C, H, W)
             targets: (B, H, W) class indices
         """
         probs = F.softmax(logits, dim=1)
-        targets_oh = F.one_hot(targets.long(), self.num_classes)  # (B, H, W, C)
+        targets_oh = F.one_hot(
+    targets.long(),
+     self.num_classes)  # (B, H, W, C)
         targets_oh = targets_oh.permute(0, 3, 1, 2).float()  # (B, C, H, W)
 
         dims = (0, 2, 3)
@@ -293,7 +297,8 @@ class MultiTaskLoss(nn.Module):
                     # We can't easily sort everything, so we use a threshold
                     # Sort only valid pixels
                     valid_logits = bce_masked[mask > 0.5]
-                    hard_threshold = torch.topk(valid_logits, num_hard).values[-1]
+                    hard_threshold = torch.topk(
+                        valid_logits, num_hard).values[-1]
                     ohem_mask = (bce_masked >= hard_threshold).float() * mask
                     bce = bce_masked[ohem_mask > 0.5].mean()
                 else:

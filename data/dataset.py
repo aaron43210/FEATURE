@@ -609,14 +609,17 @@ class SvamitvaDataset(Dataset):
             masks["roof_type_mask"] = np.zeros(output_shape, dtype=np.uint8)
 
         # ── Augmentation / tensor conversion ──────────────────────────────────
-        # Skip pure-background tiles in training mode — they carry no
-        # supervision signal and waste GPU cycles.  Resample to a random
-        # other tile instead (up to 3 retries to avoid infinite loops).
+        # Skip pure-background (or mostly-background) tiles in training mode
+        # to avoid wasting GPU cycles on empty agricultural/forest land.
+        # We require at least 0.5% of the tile to contain annotations.
         if self.mode == "train" and retries < 3:
-            any_positive = any(
-                masks[k].sum() > 0 for k in self._supervised_mask_keys if k in masks
+            total_positive = sum(
+                masks[k].sum() for k in self._supervised_mask_keys if k in masks
             )
-            if not any_positive and len(self.samples) > 1:
+            # 0.5% of a 512x512 tile is ~1300 pixels
+            min_required = int(self.image_size * self.image_size * 0.005)
+            
+            if total_positive < min_required and len(self.samples) > 1:
                 new_idx = np.random.randint(0, len(self.samples))
                 return self._load_tile(new_idx, retries=retries + 1)
 

@@ -1,61 +1,46 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
 *.py[cod]
 *$py.class
-*.so
-.Python
-env/
-.venv/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# Data & Models
-data/MAP*/
-!data/README.md
-checkpoints/
+# PyTorch and Checkpoints
 *.pt
 *.pth
-*.weights
-*.h5
-results/
-temp/
+checkpoints/
+runs/
 
-# GIS & Outputs
+# Data
+data/
 *.tif
-*.ecw
 *.shp
 *.shx
 *.dbf
 *.prj
 *.cpg
 *.gpkg
-*.qgz
-*.qmd
+*.geojson
 
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
 # Logs
 logs/
 *.log
-runs/
+tensorboard/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# VSCode / IDEs
+.vscode/
+.idea/
+*.swp
+.DS_Store

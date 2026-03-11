@@ -1,157 +1,56 @@
-# 🛰️ SVAMITVA AI Extraction Ensemble (V3)
+# SVAMITVA Feature Extraction V3 🛰️
 
-High-resolution geospatial feature extraction from drone orthophotos, designed for the **SVAMITVA** village mapping scheme. This pipeline achieves **≥95% accuracy** by leveraging a specialized ensemble of State-of-the-Art (SOTA) deep learning models.
-
-## Scope
-This repository is scoped to **Problem Statement 1 only**:
-- Building footprint extraction + roof class (RCC/Tiled/Tin/Others)
-- Road extraction
-- Waterbody extraction
-- Utility point/line extraction (transformer, OHT/tank, wells, etc.)
-
-Problem Statement 2 (DTM/drainage from point cloud) is intentionally excluded from this codebase.
-
----
+A state-of-the-art production ensemble pipeline for multi-class semantic segmentation and remote sensing feature extraction from high-resolution drone orthophotos. Built on top of Meta's SAM-2 (Segment Anything) and YOLOv8, combined with a custom Feature Pyramid Network (FPN) and advanced GIS post-processing processing.
 
 ## 🚀 Key Features
 
-- **Unified SAM2 Architecture**: High-performance **SAM2 (Hiera B+)** backbone and **FPN** decoder for consistent multi-scale feature extraction across all tasks.
-- **Specialized Task Heads**: Integrated multi-head system:
-    - `LineHead` with `DLinkBlock` for road/railway continuity.
-    - `BuildingHead` with dual-output for segmentation and roof classification.
-    - `BinaryHead`/`LineHead` for waterbodies and utilities.
-- **Full State Resumption**: Robust training pipeline with 100% recovery of optimizer and scheduler states.
-- **Interactive Tiled Inference**: Optimized Streamlit V3 app for large-scale GeoTIFF visualization (Global vs. Detail views).
-- **Point Feature Fusion**: Seamless integration of **YOLOv8** for sparse point objects (wells, transformers, tanks).
-- **Unified GIS Export**: Automated generation of georeferenced **GeoPackage (.gpkg)** layers.
+- **Multi-Task Extraction:** Simultaneously extracts 11 different geospatial features (Buildings, Roof Types, Roads, Road Centerlines, Waterbodies, Utility Lines, etc.).
+- **Foundation Model Backbone:** Leverages `sam2.1_hiera_tiny` as a powerful frozen backbone for high-resolution semantic understanding.
+- **Robust Loss Function:** Employs a 5-part composite loss (BCE + OHEM + Dice + Focal + Lovász + Boundary) specifically tuned for crisp polygon boundaries.
+- **Production Web UI:** Includes a Streamlit application (`app.py`) for drag-and-drop inference and visualization.
+- **GIS Export Pipeline:** Automatically vectors predictions into ready-to-use QGIS/ArcGIS GeoPackage (`.gpkg`) files with associated attributes (e.g., Roof Types).
 
----
+## 🛠️ Installation
 
-## 🏗️ Architecture Stack
+```bash
+# Clone the repository
+git clone https://github.com/aaron43210/FEATURE.git
+cd FEATURE
 
-| Component | Implementation | Feature Focus |
-| :--- | :--- | :--- |
-| **Backbone** | **SAM2 (Hiera B+)** | Global Multi-scale Feature Extraction |
-| **Decoder** | **FPN + CBAM Attention** | Multi-level Feature Fusion & Context |
-| **Buildings** | Dual-Output Head | Instance Mask + Roof Classification |
-| **Roads/Rail** | D-LinkNet Head | Connectivity & Directional Regularity |
-| **Utilities** | U-Net++ Multi-Head | Linear & Point Feature Precision |
-| **Points** | YOLOv8 + Fusion | Wells, Transformers, Tanks |
+# Install dependencies
+pip install -r requirements.txt
+```
 
----
+## 🧠 Training
 
-## 🧭 Recommended Global Strategy
+The trainer supports both single-GPU and Multi-GPU (DDP & DataParallel) environments automatically. 
 
-For best practical accuracy and stability on drone imagery, use a **hybrid pipeline**:
+```bash
+# Train on a single map or directory of maps
+python train.py --epochs 100 --batch_size 16 --train_dirs /path/to/data/MAP1 /path/to/data/MAP2
 
-1. **SAM2 for strong segmentation priors and auto-label bootstrapping**
-2. **Task-specialized models for production heads**
-   - DeepLabV3+ (building, water polygons)
-   - D-LinkNet (roads / centrelines)
-   - U-Net++ (utility linear features)
-   - HRNet (railway continuity)
-3. **YOLOv8 for sparse point objects** (wells, transformers, tanks)
-4. **Roof-type classification head** for RCC/Tiled/Tin/Others
+# Enable feature caching for 2x faster epochs
+python train.py --epochs 100 --batch_size 16 --cache_features --train_dirs /path/to/data/MAP1
+```
 
-The current codebase supports this in practice via:
-- SAM2-based multi-head segmentation model
-- YOLOv8 fusion for point masks
-- Roof-type raster + GIS export
+## 🌍 Inference & Deployment
 
----
+Launch the Streamlit web application to run the unified ensemble pipeline:
 
-## 📦 Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/<your-org>/<your-repo>.git
-   cd <your-repo>
-   ```
-
-2. **Install Dependencies**:
-   ```bash
-   source py314/bin/activate
-   pip install -r requirements.txt
-   ```
-
----
-
-## 🛠️ Usage
-
-### 1. Interactive Web Application
-Launch the production-grade Streamlit interface for end-to-end extraction and visualization:
 ```bash
 streamlit run app.py
 ```
 
-### 2. Model Training
-Train the ensemble model on your own drone dataset (MAP1, MAP2, etc.):
-```bash
-source py314/bin/activate
-python train.py --train_dirs /path/to/data --epochs 100 --lr 3e-4 --split_mode map --tile_size 1024 --tile_overlap 192
-```
-*Note: Use `--quick_test` for a 3-epoch smoke test.*
+From the UI, you can:
+1. Upload an orthophoto (`.tif`)
+2. Adjust confidence thresholds and TTA (Test-Time Augmentation)
+3. Visualize outputs natively overlaid on the map
+4. Click **"Generate GIS Layers"** to download vectorized `.gpkg` outputs.
 
-### 3. MAP1 3-Epoch Verification Run
-```bash
-source py314/bin/activate
-python train.py \
-  --train_dirs ../DATA/MAP1 \
-  --val_dir ../DATA/MAP1 \
-  --epochs 3 \
-  --batch_size 1 \
-  --tile_size 1024 \
-  --tile_overlap 192 \
-  --num_workers 0 \
-  --freeze_epochs 1 \
-  --max_train_tiles 24 \
-  --max_val_tiles 12 \
-  --name map1_3ep_ps1_verify
-```
-### 4. DGX/GPU Cluster Training
-For high-performance environments (NVIDIA DGX), use the provided notebook:
-- `dgx.ipynb`: Contains the multi-phase staged training logic.
+## 📁 Repository Structure
 
----
-
-## 📁 Data Structure
-To train or run inference, organize your data as follows:
-```text
-data/
-└── MAP_ID/
-    ├── MAP_ID.tif         # High-resolution Orthophoto
-    ├── Build_up.shp       # Building annotations
-    ├── Road.shp           # Road annotations
-    └── ...                # Other feature shapefiles
-```
-
----
-
-## 🎯 Output Keys
-
-| Output Key | Target Feature | Geometry |
-| :--- | :--- | :--- |
-| `building_mask` | Built-up Area | Polygon |
-| `roof_type_mask` | Roof Classification (RCC/Tiled/Tin/Others) | Polygon |
-| `road_mask` | Road | Polygon |
-| `road_centerline_mask` | Road Centre Line | Line |
-| `waterbody_mask` | Water Body | Polygon |
-| `waterbody_line_mask` | Water Body Line | Line |
-| `waterbody_point_mask` | Waterbody Point (Wells) | Point |
-| `utility_line_mask` | Utility (Pipeline/Wires) | Line |
-| `utility_point_mask` | Utility Point (Transformers/Tanks) | Point |
-| `bridge_mask` | Bridge | Polygon |
-| `railway_mask` | Railway | Line |
-
----
-
-## 📊 Performance & Target
-This project is engineered to meet the stringent requirements of SVAMITVA mapping:
-- **Target IoU**: ≥95% across all primary layers.
-- **Resolution**: Native support for 5cm - 10cm GSD drone imagery.
-- **Export Formats**: Standard GIS vector outputs (SHP/GPKG/GeoJSON).
-
----
-
-## ⚖️ License
-This project is proprietary for the SVAMITVA scheme. (C) 2026.
+- `models/`: Contains the SAM2 Encoder, FPN Decoder, and Specialized Heads.
+- `train_engine/`: Production training loop, caching, and config files.
+- `inference/`: Predictor classes, YOLO ensembles, and vectorization logic (`export.py`).
+- `data/`: Custom PyTorch Dataset loaders handling large-scale TIF tiling and raw shapefile rasterization.
+- `app.py`: The main Streamlit web interface.

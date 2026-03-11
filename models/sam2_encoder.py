@@ -16,12 +16,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
-DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_tiny.yaml"
 
 # Default SAM2.1 checkpoint URL
 SAM2_CHECKPOINT_URL = (
     "https://dl.fbaipublicfiles.com/segment_anything_2"
-    "/092824/sam2.1_hiera_base_plus.pt"
+    "/092824/sam2.1_hiera_tiny.pt"
 )
 
 
@@ -88,7 +88,9 @@ def _ensure_sam2_importable() -> bool:
         if str(candidate) not in sys.path:
             sys.path.append(str(candidate))
         if _has_sam2_build():
-            logger.info("Loaded SAM2 package from local source tree: %s", candidate)
+            logger.info(
+    "Loaded SAM2 package from local source tree: %s",
+     candidate)
             return True
     return False
 
@@ -109,7 +111,9 @@ def _resolve_model_cfg_path(model_cfg: str) -> str:
     for root in _discover_local_sam2_roots():
         local_cfg = root / model_cfg
         if local_cfg.exists():
-            logger.info("Resolved SAM2 config from local source: %s", local_cfg)
+            logger.info(
+    "Resolved SAM2 config from local source: %s",
+     local_cfg)
             return str(local_cfg)
 
     return model_cfg
@@ -198,7 +202,8 @@ class SAM2Encoder(nn.Module):
                 feats = self._extract_features(out)
                 return {key: val.shape[1] for key, val in feats.items()}
             except Exception as e:
-                logger.warning("Channel inference failed: %s. Using defaults.", e)
+                logger.warning(
+    "Channel inference failed: %s. Using defaults.", e)
                 return {
                     "feat_s4": 256,
                     "feat_s8": 256,
@@ -234,14 +239,14 @@ class SAM2Encoder(nn.Module):
             result = {}
             for i, (_, val) in enumerate(out.items()):
                 if isinstance(val, torch.Tensor):
-                    result[f"feat_s{4*(2**i)}"] = val.contiguous()
+                    result[f"feat_s{4 *(2**i)}"] = val.contiguous()
             return result
 
         if isinstance(out, (list, tuple)):
             result = {}
             for i, feat in enumerate(out):
                 if isinstance(feat, torch.Tensor):
-                    result[f"feat_s{4*(2**i)}"] = feat.contiguous()
+                    result[f"feat_s{4 *(2**i)}"] = feat.contiguous()
             return result
 
         return {"feat_s16": out.contiguous()}
@@ -271,7 +276,8 @@ class SAM2Encoder(nn.Module):
                 c2 = self.layer2(c1)  # stride 8
                 c3 = self.layer3(c2)  # stride 16
                 c4 = self.layer4(c3)  # stride 32
-                return {"feat_s4": c1, "feat_s8": c2, "feat_s16": c3, "feat_s32": c4}
+                return {"feat_s4": c1, "feat_s8": c2,
+                    "feat_s16": c3, "feat_s32": c4}
 
         encoder = ResNetEncoder(resnet)
         channels = {

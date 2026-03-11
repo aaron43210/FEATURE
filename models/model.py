@@ -27,9 +27,9 @@ from .heads import create_all_heads
 logger = logging.getLogger(__name__)
 
 DEFAULT_SAM2_CKPT_CANDIDATES = [
-    Path("check/sam2.1_hiera_base_plus.pt"),
-    Path("checkpoints/sam2.1_hiera_base_plus.pt"),
-    Path("checkpoints/sam2_hiera_base_plus.pt"),
+    Path("check/sam2.1_hiera_tiny.pt"),
+    Path("checkpoints/sam2.1_hiera_tiny.pt"),
+    Path("checkpoints/sam2_hiera_tiny.pt"),
 ]
 
 
@@ -53,7 +53,8 @@ class EnsembleSvamitvaModel(nn.Module):
     ):
         super().__init__()
 
-        resolved_ckpt = self._resolve_sam2_checkpoint(checkpoint_path, pretrained)
+        resolved_ckpt = self._resolve_sam2_checkpoint(
+            checkpoint_path, pretrained)
 
         # 1. Backbone (SAM2)
         self.encoder = SAM2Encoder(
@@ -70,7 +71,8 @@ class EnsembleSvamitvaModel(nn.Module):
             in_channels=256, num_roof_classes=num_roof_classes, dropout=dropout
         )
 
-    def _resolve_sam2_checkpoint(self, checkpoint_path: str, pretrained: bool) -> str:
+    def _resolve_sam2_checkpoint(
+        self, checkpoint_path: str, pretrained: bool) -> str:
         """Resolve which SAM2 checkpoint should initialize the encoder."""
         if checkpoint_path:
             p = Path(checkpoint_path)
@@ -90,7 +92,8 @@ class EnsembleSvamitvaModel(nn.Module):
 
         return ""
 
-    def forward(self, x: torch.Tensor, task: str = "all") -> Dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor,
+                task: str = "all") -> Dict[str, torch.Tensor]:
         """
         Forward pass through the unified pipeline.
 
@@ -182,7 +185,8 @@ class EnsembleSvamitvaModel(nn.Module):
             )
 
         # Utilities
-        if run_all or task_norm in {"utilities", "utility", "utility_line_mask"}:
+        if run_all or task_norm in {
+            "utilities", "utility", "utility_line_mask"}:
             outputs["utility_line_mask"] = F.interpolate(
                 self.heads["utility_line"](fused_feat),
                 size=target_size,
@@ -231,7 +235,8 @@ class EnsembleSvamitvaModel(nn.Module):
     def get_param_groups(self, base_lr: float = 1e-4) -> list:
         """Categorize parameters for LR scaling."""
         backbone_params = list(self.encoder.parameters())
-        head_params = list(self.decoder.parameters()) + list(self.heads.parameters())
+        head_params = list(self.decoder.parameters()) + \
+                           list(self.heads.parameters())
 
         return [
             {"params": head_params, "lr": base_lr},
