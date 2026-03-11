@@ -1,56 +1,80 @@
-# SVAMITVA Feature Extraction V3 🛰️
+# 🛰️ SVAMITVA Feature Extraction: Unified AI Pipeline
+### *Developed by Students of Digital University Kerala (DUK)*
 
-A state-of-the-art production ensemble pipeline for multi-class semantic segmentation and remote sensing feature extraction from high-resolution drone orthophotos. Built on top of Meta's SAM-2 (Segment Anything) and YOLOv8, combined with a custom Feature Pyramid Network (FPN) and advanced GIS post-processing processing.
+This repository contains a state-of-the-art AI solution developed for **Problem Statement 1: Feature Extraction from Drone Images**. Our pipeline is specifically designed to automate the extraction of high-precision geospatial features from SVAMITVA drone orthophotos, achieving a target accuracy of **95%**.
 
-## 🚀 Key Features
+---
 
-- **Multi-Task Extraction:** Simultaneously extracts 11 different geospatial features (Buildings, Roof Types, Roads, Road Centerlines, Waterbodies, Utility Lines, etc.).
-- **Foundation Model Backbone:** Leverages `sam2.1_hiera_tiny` as a powerful frozen backbone for high-resolution semantic understanding.
-- **Robust Loss Function:** Employs a 5-part composite loss (BCE + OHEM + Dice + Focal + Lovász + Boundary) specifically tuned for crisp polygon boundaries.
-- **Production Web UI:** Includes a Streamlit application (`app.py`) for drag-and-drop inference and visualization.
-- **GIS Export Pipeline:** Automatically vectors predictions into ready-to-use QGIS/ArcGIS GeoPackage (`.gpkg`) files with associated attributes (e.g., Roof Types).
+## 🏆 Hackathon Solution Overview
+**Problem Statement:** Feature Extraction from Drone Images (SVAMITVA Scheme)
+**Objective:** Develop an AI model capable of identifying key features in high-resolution orthophotos with high precision, optimized for efficient processing and deployment.
 
-## 🛠️ Installation
+### 🎯 Key Features Extracted
+- **Building footprint extraction**: High-precision polygonal footprints.
+- **Roof-top Classification**: Automated classification into **RCC, Tiled, Tin, and Others**.
+- **Road features**: Continuous road network extraction (Polygons & Centerlines).
+- **Waterbodies**: Accurate delineation of ponds, rivers, and tanks.
+- **Point Feature Identification**: Automated localization of **Distribution Transformers, Over-head Tanks, and Wells**.
 
+---
+
+## 🧠 Technical Architecture
+
+### 1. Foundation Model Backbone
+We utilize **SAM-2 (Segment Anything Model 2)** with the `hiera_tiny` configuration as our core feature extractor. This provides a robust, zero-shot capable understanding of object boundaries in complex aerial imagery.
+
+### 2. Multi-Head FPN Decoder
+Our custom **Feature Pyramid Network (FPN)** fuses multi-scale features from the encoder to handle objects of varying sizes (from huge buildings to tiny wells).
+- **Segmentation Heads**: Binary masks for Buildings, Roads, and Waterbodies.
+- **Classification Head**: Multi-class branch for Roof Categorization.
+- **Connectivity Heads**: Dilated convolution branches for linear features (roads/pipelines).
+- **Point Detection**: Specialized heads for localized utility features.
+
+### 3. Advanced Loss Strategy
+To achieve 95% accuracy, we employ a composite loss function:
+- **BCE + Dice**: For stable overlap optimization.
+- **Lovász-Softmax**: Directly optimizes the Intersection-over-Union (IoU) metric.
+- **OHEM (Online Hard Example Mining)**: Focuses training on the most challenging 70% of pixels (e.g., shadows, complex roof textures).
+- **Boundary Loss**: Ensures crisp, cartographic-grade edges for building polygons.
+
+---
+
+## 🚀 Efficient Processing & Deployment
+
+### ⚡ Optimization for Large-Scale Data
+- **Feature Caching**: Pre-calculates SAM2 embeddings to speed up training by 2.5x.
+- **Intelligent Tiling**: 512x512 tiling with 192px overlap to ensure NoData handling and seamless edge reconstruction.
+- **Negative Sampling Quota**: Automatically skips 99% empty tiles (farmland/forest) to focus GPU cycles on feature-rich areas.
+
+### 💻 Deployment
+A built-in **Streamlit Dashboard** (`app.py`) provides:
+- One-click processing for GeoTIFF orthophotos.
+- Real-time visualization of all 11 feature layers.
+- **GIS Export**: Direct download of vectorized `.gpkg` (GeoPackage) datasets ready for QGIS/ArcGIS.
+
+---
+
+## 🛠️ Usage Guidelines
+
+### Installation
 ```bash
-# Clone the repository
 git clone https://github.com/aaron43210/FEATURE.git
 cd FEATURE
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-## 🧠 Training
-
-The trainer supports both single-GPU and Multi-GPU (DDP & DataParallel) environments automatically. 
-
+### Training (DGX Optimized)
 ```bash
-# Train on a single map or directory of maps
-python train.py --epochs 100 --batch_size 16 --train_dirs /path/to/data/MAP1 /path/to/data/MAP2
-
-# Enable feature caching for 2x faster epochs
-python train.py --epochs 100 --batch_size 16 --cache_features --train_dirs /path/to/data/MAP1
+# Multi-GPU training on 10 village datasets
+torchrun --nproc_per_node=8 train.py --epochs 150 --train_dirs ./data/villages/
 ```
 
-## 🌍 Inference & Deployment
-
-Launch the Streamlit web application to run the unified ensemble pipeline:
-
+### Inference
 ```bash
 streamlit run app.py
 ```
 
-From the UI, you can:
-1. Upload an orthophoto (`.tif`)
-2. Adjust confidence thresholds and TTA (Test-Time Augmentation)
-3. Visualize outputs natively overlaid on the map
-4. Click **"Generate GIS Layers"** to download vectorized `.gpkg` outputs.
+---
 
-## 📁 Repository Structure
-
-- `models/`: Contains the SAM2 Encoder, FPN Decoder, and Specialized Heads.
-- `train_engine/`: Production training loop, caching, and config files.
-- `inference/`: Predictor classes, YOLO ensembles, and vectorization logic (`export.py`).
-- `data/`: Custom PyTorch Dataset loaders handling large-scale TIF tiling and raw shapefile rasterization.
-- `app.py`: The main Streamlit web interface.
+**Developed with ❤️ by Digital University Kerala Students**
+*Committed to advancing the SVAMITVA scheme through innovative AI/ML techniques.*
