@@ -118,8 +118,8 @@ def _cleanup_temp_files():
 atexit.register(_cleanup_temp_files)
 
 
-# Upload size limit (500 MB)
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+# Upload size limit (10 GB)
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".tif", ".tiff", ".jpg", ".jpeg", ".png"}
 
 

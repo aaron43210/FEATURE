@@ -53,7 +53,7 @@ Our export module applies research-backed geometric refinement to every extracte
 
 ### 5. Security & Production Hardening
 - Per-class adaptive confidence thresholds (instead of global 0.5)
-- Input file size validation (500 MB limit)
+- Input file size validation (10 GB limit)
 - File extension whitelist validation
 - Output filename sanitization (path traversal prevention)
 - Temp file cleanup on process exit
