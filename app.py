@@ -2,7 +2,9 @@
 SVAMITVA Feature Extraction — Production Ensemble V3 Web Application
 """
 
+import atexit
 import io
+import os
 import tempfile
 import zipfile
 from pathlib import Path
@@ -101,6 +103,26 @@ def get_best_ckpt():
     return candidates[0]
 
 
+# Security: Track temp files for cleanup
+_temp_files: list = []
+
+
+def _cleanup_temp_files():
+    for f in _temp_files:
+        try:
+            os.unlink(f)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_temp_files)
+
+
+# Upload size limit (500 MB)
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+ALLOWED_EXTENSIONS = {".tif", ".tiff", ".jpg", ".jpeg", ".png"}
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
 
 
@@ -149,10 +171,27 @@ def main():
     )
 
     if uploaded:
+        # Security: Validate file size
+        file_size = len(uploaded.getvalue())
+        if file_size > MAX_UPLOAD_BYTES:
+            st.error(
+                f"File too large ({file_size / 1e6:.0f} MB). "
+                f"Maximum allowed: {MAX_UPLOAD_BYTES / 1e6:.0f} MB."
+            )
+            st.stop()
+
+        # Security: Validate extension
         ext = Path(uploaded.name).suffix.lower()
-        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        if ext not in ALLOWED_EXTENSIONS:
+            st.error(f"Unsupported file type: {ext}")
+            st.stop()
+
+        with tempfile.NamedTemporaryFile(
+            suffix=ext, delete=False
+        ) as tmp:
             tmp.write(uploaded.getvalue())
             tif_path = Path(tmp.name)
+            _temp_files.append(tmp.name)
 
         is_geospatial = ext in [".tif", ".tiff"]
 

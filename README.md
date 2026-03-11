@@ -1,3 +1,14 @@
+---
+title: SVAMITVA MAP FEATURE EXTRACTER
+emoji: 🛰️
+colorFrom: blue
+colorTo: green
+sdk: streamlit
+sdk_version: 1.31.0
+app_file: app.py
+pinned: false
+---
+
 # 🛰️ SVAMITVA Feature Extraction: Unified AI Pipeline
 ### *Developed by Students of Digital University Kerala (DUK)*
 
@@ -32,12 +43,22 @@ Our custom **Feature Pyramid Network (FPN)** fuses multi-scale features from the
 - **Connectivity Heads**: Dilated convolution branches for linear features (roads/pipelines).
 - **Point Detection**: Specialized heads for localized utility features.
 
-### 3. Advanced Loss Strategy
-To achieve 95% accuracy, we employ a composite loss function:
-- **BCE + Dice**: For stable overlap optimization.
-- **Lovász-Softmax**: Directly optimizes the Intersection-over-Union (IoU) metric.
-- **OHEM (Online Hard Example Mining)**: Focuses training on the most challenging 70% of pixels (e.g., shadows, complex roof textures).
-- **Boundary Loss**: Ensures crisp, cartographic-grade edges for building polygons.
+### 4. Advanced Post-Processing Pipeline
+Our export module applies research-backed geometric refinement to every extracted feature layer:
+- **Buildings & Bridges**: Dominant-angle orthogonalization (Schuegraf et al. ISPRS 2024) for sharp 90° corners; `minAreaRect` fallback for small structures.
+- **Roads**: Morphological closing (7px kernel) to bridge tree-canopy gaps; hole filling for continuous surfaces.
+- **All Lines (Centerlines, Utilities, Railways)**: `skan`-based skeleton pruning → Chaikin corner-cutting smoothing → dead-end snapping for connected networks.
+- **Waterbodies**: Large morphological closing (9px) for smooth natural shorelines; convex hull for tiny ponds.
+- **Point Features**: YOLOv8 centroid extraction (no geometric post-processing needed).
+
+### 5. Security & Production Hardening
+- Per-class adaptive confidence thresholds (instead of global 0.5)
+- Input file size validation (500 MB limit)
+- File extension whitelist validation
+- Output filename sanitization (path traversal prevention)
+- Temp file cleanup on process exit
+- Lazy `%`-style logging (prevents format string injection)
+- Pinned dependency versions for reproducible builds
 
 ---
 

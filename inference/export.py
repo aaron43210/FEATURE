@@ -15,7 +15,16 @@ import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.features import shapes as rasterio_shapes
-from shapely.geometry import Point, Polygon, MultiPolygon, shape
+from shapely.geometry import LineString, Point, Polygon, MultiPolygon, shape
+
+from inference.postprocess import (
+    get_threshold,
+    prune_skeleton,
+    refine_line,
+    refine_mask,
+    refine_polygon,
+    snap_line_endpoints,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +101,15 @@ def _mask_to_geometries(
     geom_type: str = "Polygon",
     min_val: float = 20.0,
     simplify_tol: float = 0.5,
+    feature_key: str = "",
 ) -> list:
-    """Convert mask to cleaned shapely geometries."""
+    """Convert mask to cleaned shapely geometries with post-processing."""
     binary = (mask > threshold).astype(np.uint8)
+    if binary.sum() == 0:
+        return []
+
+    # ── Stage 1: Mask-level morphological refinement ──
+    binary = refine_mask(binary, feature_key)
     if binary.sum() == 0:
         return []
 
@@ -102,13 +117,26 @@ def _mask_to_geometries(
         from skimage.morphology import skeletonize
 
         skeleton = skeletonize(binary)
+
+        # ── Stage 2: Skeleton pruning (remove spurious branches) ──
+        skeleton = prune_skeleton(skeleton, feature_key)
+
         shapes = list(
             rasterio_shapes(
                 skeleton.astype(np.uint8), mask=skeleton > 0, transform=transform
             )
         )
         geoms = [shape(g) for g, v in shapes if v > 0]
-        return [g for g in geoms if g.length > min_val]
+        geoms = [g for g in geoms if g.length > min_val]
+
+        # ── Stage 3: Chaikin smoothing on each line ──
+        geoms = [refine_line(g, feature_key) if isinstance(g, LineString) else g
+                 for g in geoms]
+
+        # ── Stage 4: Dead-end snapping (connect broken endpoints) ──
+        geoms = snap_line_endpoints(geoms, feature_key)
+
+        return geoms
 
     elif geom_type == "Polygon":
         shapes = list(rasterio_shapes(binary, mask=binary > 0, transform=transform))
@@ -120,7 +148,10 @@ def _mask_to_geometries(
             if simplify_tol > 0:
                 poly = poly.simplify(simplify_tol, preserve_topology=True)
             if not poly.is_empty and poly.is_valid:
-                geoms.append(poly)
+                # ── Stage 3: Polygon refinement (orthogonalize / smooth) ──
+                poly = refine_polygon(poly, feature_key)
+                if not poly.is_empty and poly.is_valid:
+                    geoms.append(poly)
         return geoms
 
     elif geom_type == "Point":
@@ -204,7 +235,7 @@ class GISExporter:
             if key not in results or not isinstance(results[key], np.ndarray):
                 continue
 
-            logger.info(f"Vectorizing {config['name']}...")
+            logger.info("Vectorizing %s...", config['name'])
             mask = results[key]
 
             if key == "roof_type_mask":
@@ -218,13 +249,19 @@ class GISExporter:
                     exported_paths[key] = self._write_records(records, config["name"])
                 continue
 
+            # Use per-class adaptive threshold from postprocess config
+            adaptive_thresh = get_threshold(key)
+            fallback_thresh = self._get_threshold(key)
+            threshold = adaptive_thresh if adaptive_thresh != 0.5 else fallback_thresh
+
             geoms = _mask_to_geometries(
                 mask,
                 transform,
-                threshold=self._get_threshold(key),
+                threshold=threshold,
                 geom_type=str(config["type"]),
                 min_val=float(config.get("min_area", config.get("min_length", 0))),
                 simplify_tol=float(config.get("simplify", 0)),
+                feature_key=key,
             )
 
             if geoms:
@@ -258,7 +295,7 @@ class GISExporter:
             for key, items in det_by_key.items():
                 name = FEATURE_CONFIG[key]["name"]
                 exported_paths[f"det_{key}"] = self._write_records(
-                    items, name, layer_class=name
+                    items, name
                 )
 
         return exported_paths
@@ -269,9 +306,15 @@ class GISExporter:
             if "id" not in row:
                 row["id"] = i
         gdf = gpd.GeoDataFrame(records, crs=self.crs)
-        out_path = self.output_dir / f"{layer_name}.gpkg"
+        # Sanitize layer name for safe file path
+        safe_name = "".join(
+            c for c in layer_name if c.isalnum() or c in ("_", "-", ".")
+        )
+        out_path = self.output_dir / f"{safe_name}.gpkg"
         gdf.to_file(out_path, driver="GPKG")
-        logger.info(f"  Saved {len(gdf)} features to {out_path.name}")
+        logger.info(
+            "  Saved %d features to %s", len(gdf), out_path.name
+        )
         return out_path
 
     def _write_gpkg(
@@ -306,7 +349,9 @@ class GISExporter:
         gdf = gpd.GeoDataFrame(records, crs=self.crs)
         out_path = self.output_dir / f"{name}.gpkg"
         gdf.to_file(out_path, driver="GPKG")
-        logger.info(f"  Saved {len(gdf)} features to {out_path.name}")
+        logger.info(
+            "  Saved %d features to %s", len(gdf), out_path.name
+        )
         return out_path
 
 
