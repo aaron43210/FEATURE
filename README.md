@@ -32,20 +32,20 @@ This repository contains a state-of-the-art AI solution developed for **Problem 
 ## 🧠 Technical Architecture
 
 ### 1. Foundation Model Backbone
-We utilize **SAM-2 (Segment Anything Model 2)** with the `hiera_tiny` configuration as our core feature extractor. This provides a robust, zero-shot capable understanding of object boundaries in complex aerial imagery.
+We utilize **Segformer-B4 (Mix Transformer)** pre-trained on high-resolution ImageNet and Cityscapes datasets as our core feature extractor. Unlike traditional CNNs, this Vision Transformer natively outputs 4 scale-agnostic feature maps, making it the industry standard for complex aerial semantics like "RCC Roof" vs "Tin Roof".
 
 For a detailed breakdown of the model design, see [architecture.md](architecture.md).
 
-### 2. Multi-Head FPN Decoder
-Our custom **Feature Pyramid Network (FPN)** fuses multi-scale features from the encoder to handle objects of varying sizes (from huge buildings to tiny wells).
+### 2. Multi-Head UPerFPN Decoder
+Our custom **Unified Perceptual Pyramid Network (UPerFPN)** fuses the 4 multi-scale features from the Segformer encoder using Bilinear Interpolation and CBAM (Convolutional Block Attention Module) to handle objects of drastically varying sizes.
 - **Segmentation Heads**: Binary masks for Buildings, Roads, and Waterbodies.
 - **Classification Head**: Multi-class branch for Roof Categorization.
 - **Connectivity Heads**: Dilated convolution branches for linear features (roads/pipelines).
 - **Point Detection**: Specialized heads for localized utility features.
 
-### 4. Advanced Post-Processing Pipeline
+### 3. Advanced Post-Processing Pipeline
 Our export module applies research-backed geometric refinement to every extracted feature layer:
-- **Buildings & Bridges**: Dominant-angle orthogonalization (Schuegraf et al. ISPRS 2024) for sharp 90° corners; `minAreaRect` fallback for small structures.
+- **Buildings & Bridges**: PolyMapper-style dominant angle Orthogonalization using SamGeo Feature Edge Reconstruction (FER) for mathematically perfect square/L-shaped structures.
 - **Roads**: Morphological closing (7px kernel) to bridge tree-canopy gaps; hole filling for continuous surfaces.
 - **All Lines (Centerlines, Utilities, Railways)**: `skan`-based skeleton pruning → Chaikin corner-cutting smoothing → dead-end snapping for connected networks.
 - **Waterbodies**: Large morphological closing (9px) for smooth natural shorelines; convex hull for tiny ponds.
@@ -56,8 +56,6 @@ Our export module applies research-backed geometric refinement to every extracte
 - Input file size validation (10 GB limit)
 - File extension whitelist validation
 - Output filename sanitization (path traversal prevention)
-- Temp file cleanup on process exit
-- Lazy `%`-style logging (prevents format string injection)
 - Pinned dependency versions for reproducible builds
 
 ---
@@ -65,7 +63,7 @@ Our export module applies research-backed geometric refinement to every extracte
 ## 🚀 Efficient Processing & Deployment
 
 ### ⚡ Optimization for Large-Scale Data
-- **Feature Caching**: Pre-calculates SAM2 embeddings to speed up training by 2.5x.
+- **MMSegmentation Patterns**: Loss functions utilizing Lovász Hinge and Online Hard Example Mining (Focal Loss) directly optimize IoU over massive orthophotos.
 - **Intelligent Tiling**: 512x512 tiling with 192px overlap to ensure NoData handling and seamless edge reconstruction.
 - **Negative Sampling Quota**: Automatically skips 99% empty tiles (farmland/forest) to focus GPU cycles on feature-rich areas.
 
@@ -92,15 +90,15 @@ The `train.py` script unifies the three-stage training process into a single com
 ```bash
 # Train everything (Segmentation + YOLO)
 # For 10 villages on DGX (8 GPUs), this takes ~8-12 hours
-python train.py --train_dirs ./data/villages/ --epochs 150 --batch_size 16 --cache_features
+python train.py --train_dirs ./data/villages/ --epochs 150 --batch_size 16
 ```
 
 **Workflow:**
 1.  **YOLO Prep**: Converts shapefile points to YOLO bounding boxes and image tiles.
-2.  **Segmentation**: Trains the SAM2+FPN ensemble for buildings, roads, water, and roof types.
+2.  **Segmentation**: Trains the Segformer+UPerFPN ensemble for buildings, roads, water, and roof types.
 3.  **YOLO Train**: Trains the YOLOv8 point detector for high-precision utility localization.
 
-For DGX environments, the script automatically leverages all available GPUs via DataParallel/DDP.
+For DGX environments, the script automatically leverages all available GPUs via DataParallel/DDP, routing data directly through the HuggingFace Segformer backbone.
 
 ### Inference
 ```bash

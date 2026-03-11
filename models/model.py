@@ -20,17 +20,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .sam2_encoder import DEFAULT_SAM2_MODEL_CFG, SAM2Encoder
+from .segformer_encoder import DEFAULT_SEGFORMER_MODEL, SegformerEncoder
 from .decoder import FPNDecoder
 from .heads import create_all_heads
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_SAM2_CKPT_CANDIDATES = [
-    Path("check/sam2.1_hiera_tiny.pt"),
-    Path("checkpoints/sam2.1_hiera_tiny.pt"),
-    Path("checkpoints/sam2_hiera_tiny.pt"),
-]
 
 
 class EnsembleSvamitvaModel(nn.Module):
@@ -38,7 +32,7 @@ class EnsembleSvamitvaModel(nn.Module):
     Unified Production Architecture for SVAMITVA Feature Extraction.
 
     Integrates:
-    - SAM2 Hiera Backbone (Multi-scale features)
+    - SegFormer-B4 Backbone (Multi-scale Mix Transformer)
     - FPN Decoder with CBAM Attention
     - Specialized Task Heads (Building, Line, Detection)
     """
@@ -47,48 +41,32 @@ class EnsembleSvamitvaModel(nn.Module):
         self,
         num_roof_classes: int = 5,
         pretrained: bool = True,
-        checkpoint_path: str = "",
-        model_cfg: str = DEFAULT_SAM2_MODEL_CFG,
+        model_name: str = DEFAULT_SEGFORMER_MODEL,
         dropout: float = 0.1,
     ):
         super().__init__()
 
-        resolved_ckpt = self._resolve_sam2_checkpoint(checkpoint_path, pretrained)
-
-        # 1. Backbone (SAM2)
-        self.encoder = SAM2Encoder(
-            checkpoint_path=resolved_ckpt, model_cfg=model_cfg, freeze=False
+        # 1. Backbone (SegFormer)
+        self.encoder = SegformerEncoder(
+            model_name=model_name, load_pretrained=pretrained, freeze=False
         )
+
+        # SegFormer outputs exactly 4 levels: 64, 128, 320, 512 channels
+        # Order is intrinsically hierarchical (Scale 1 -> Scale 4)
+        self.fpn_in_channels = {
+            "feat_s1": self.encoder.feature_channels[0],  # 64
+            "feat_s2": self.encoder.feature_channels[1],  # 128
+            "feat_s3": self.encoder.feature_channels[2],  # 320
+            "feat_s4": self.encoder.feature_channels[3],  # 512
+        }
 
         # 2. Decoder (FPN + CBAM)
-        self.decoder = FPNDecoder(
-            in_channels=self.encoder.feature_channels, out_channels=256
-        )
+        self.decoder = FPNDecoder(in_channels=self.fpn_in_channels, out_channels=256)
 
         # 3. Heads (11 tasks)
         self.heads = create_all_heads(
             in_channels=256, num_roof_classes=num_roof_classes, dropout=dropout
         )
-
-    def _resolve_sam2_checkpoint(self, checkpoint_path: str, pretrained: bool) -> str:
-        """Resolve which SAM2 checkpoint should initialize the encoder."""
-        if checkpoint_path:
-            p = Path(checkpoint_path)
-            if p.exists():
-                return str(p)
-            logger.warning("Specified SAM2 checkpoint not found: %s", p)
-
-        if pretrained:
-            for cand in DEFAULT_SAM2_CKPT_CANDIDATES:
-                if cand.exists():
-                    logger.info("Using SAM2 checkpoint: %s", cand)
-                    return str(cand)
-            logger.warning(
-                "No SAM2 checkpoint file found in default locations. "
-                "Encoder will initialize without local checkpoint."
-            )
-
-        return ""
 
     def forward(self, x: torch.Tensor, task: str = "all") -> Dict[str, torch.Tensor]:
         """
@@ -99,7 +77,15 @@ class EnsembleSvamitvaModel(nn.Module):
             task: Task filter (e.g., "buildings", "roads", or "all")
         """
         # Feature extraction
-        backbone_feats = self.encoder(x)
+        backbone_feats_list = self.encoder(x)
+        
+        # Package into a dict mapping the exact names expected by the decoder
+        backbone_feats = {
+            "feat_s1": backbone_feats_list[0],  # 64 channels
+            "feat_s2": backbone_feats_list[1],  # 128 channels
+            "feat_s3": backbone_feats_list[2],  # 320 channels
+            "feat_s4": backbone_feats_list[3],  # 512 channels
+        }
 
         # Multi-scale fusion
         fused_feat = self.decoder(backbone_feats)

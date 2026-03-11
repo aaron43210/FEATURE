@@ -26,7 +26,6 @@ from tqdm import tqdm
 
 from .config import TrainingConfig
 from .metrics import MetricsTracker
-from .cache import FeatureCache
 
 logger = logging.getLogger(__name__)
 
@@ -459,11 +458,8 @@ class Trainer:
             config.patience,
         )
 
-        # Feature Cache
-        self.feature_cache = FeatureCache(
-            cache_dir=str(config.project_root / "feature_cache"),
-            enabled=config.cache_features,
-        )
+        # Feature Caching (Removed for SegFormer)
+        self.feature_cache_enabled = False
 
         # TensorBoard writer (only on rank 0)
         self.tb_writer = None
@@ -668,30 +664,7 @@ class Trainer:
             with torch.autocast(
                 device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp
             ):
-                # Check cache if backbone is frozen
-                predictions = None
-                if self.feature_cache.enabled and not self.model.encoder.training:
-                    cached_feats = self.feature_cache.get(images)
-                    if cached_feats is not None:
-                        # Ensure cached feats are on correct device
-                        cached_feats = [f.to(self.device) for f in cached_feats]
-                        # Bypass encoder and go straight to decoder/heads
-                        # We need to reach into the model for this
-                        m = self.model.module if self.is_multi_gpu else self.model
-                        fused_feat = m.decoder(cached_feats)
-                        predictions = m.heads(fused_feat)
-
-                if predictions is None:
-                    # Normal forward if no cache or backbone is training
-                    predictions = self.model(images)
-
-                    # Store features for next time if backbone is frozen
-                    if self.feature_cache.enabled and not self.model.encoder.training:
-                        m = self.model.module if self.is_multi_gpu else self.model
-                        with torch.no_grad():
-                            backbone_feats = m.encoder(images)
-                        self.feature_cache.put(images, backbone_feats)
-
+                predictions = self.model(images)
                 loss, breakdown = self.loss_fn(predictions, batch)
 
             # Skip NaN/Inf loss batches

@@ -136,23 +136,26 @@ class FPNDecoder(nn.Module):
     def forward(self, features: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Args:
-            features: dict of backbone feature maps {name: (B, C, H, W)}
-
-        Returns:
-            (B, out_channels, H_max, W_max) fused feature map
+            features: list or dict of backbone feature maps.
         """
+        if isinstance(features, list):
+            # Fallback legacy catch
+            features = {
+                f"feat_s{i+1}": feat 
+                for i, feat in enumerate(features)
+            }
+            
         # Sort by spatial resolution (Coarsest to Finest)
-        # s32 > s16 > s8 > s4
+        # e.g., shape[2] is Height. Smallest height = coarsest map.
         sorted_keys = sorted(features.keys(), key=lambda k: features[k].shape[2])
 
-        # Build lateral projections
+        # Build lateral projections. Dictionary lookup ensures matching channels.
         laterals = {}
         for name in sorted_keys:
             if name in self.laterals:
                 laterals[name] = self.laterals[name](features[name])
             else:
-                # If key not in laterals, skip
-                continue
+                laterals[name] = features[name]
 
         # Top-down pathway (coarsest to finest)
         processed = {}
@@ -170,8 +173,10 @@ class FPNDecoder(nn.Module):
                     prev, size=lat.shape[2:], mode="bilinear", align_corners=False
                 )
                 lat = lat + prev_up
-            lat = self.smoothing[name](lat)
-            lat = self.attention[name](lat)
+            
+            if name in self.smoothing and name in self.attention:
+                lat = self.smoothing[name](lat)
+                lat = self.attention[name](lat)
             processed[name] = lat
             prev = lat
 

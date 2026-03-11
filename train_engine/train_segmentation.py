@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_tiny.yaml"
+DEFAULT_SEGFORMER_MODEL = "nvidia/segformer-b4-finetuned-cityscapes-1024-1024"
 
 # Setup logging
 logging.basicConfig(
@@ -57,9 +57,9 @@ def parse_args():
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--freeze_epochs", type=int, default=5)
     p.add_argument(
-        "--sam2_checkpoint",
-        default="checkpoints/sam2.1_hiera_base_plus.pt",
-        help="Path to SAM2 backbone checkpoint",
+        "--model_name",
+        default=DEFAULT_SEGFORMER_MODEL,
+        help="HuggingFace model name for the SegFormer backbone",
     )
 
     # DGX Specifics
@@ -73,11 +73,7 @@ def parse_args():
         "For max efficiency, launch with: "
         "torchrun --nproc_per_node=8 train_engine/train_segmentation.py",
     )
-    p.add_argument(
-        "--cache_features",
-        action="store_true",
-        help="Cache frozen SAM2 backbone disk features to drastically speed up early epochs.",
-    )
+
     p.add_argument("--quick_test", action="store_true", help="3-epoch smoke test")
 
     return p.parse_args()
@@ -118,10 +114,10 @@ def main():
             checkpoint_dir=Path(args.checkpoint_dir),
             experiment_name=args.name,
             dropout=args.dropout,
-            sam2_checkpoint=Path(args.sam2_checkpoint),
+            sam2_checkpoint=None,
             mixed_precision=True,
             force_cpu=not torch.cuda.is_available(),
-            cache_features=args.cache_features,
+            cache_features=False,
         )
         # Handle multi_gpu flag override if requested
         if not args.multi_gpu:
@@ -145,7 +141,7 @@ def main():
     # Model
     logger.info("Building model...")
     model = EnsembleSvamitvaModel(
-        checkpoint_path=str(config.sam2_checkpoint),
+        model_name=args.model_name,
         dropout=config.dropout,
     )
 
