@@ -141,12 +141,18 @@ def main():
         yolo_path = st.text_input("YOLOv8 Weights", default_yolo)
 
         st.divider()
-        st.subheader("🛠️ Extraction Tasks")
-        selected_masks = []
-        for key, meta in FEATURES.items():
-            enabled = st.checkbox(meta[0], value=True, key=f"feature_{key}")
-            if enabled:
-                selected_masks.append(key)
+        st.subheader("🛠️ Extraction Prompts")
+        st.write("Type or select the features you want to extract:")
+        options = list(FEATURES.keys())
+        format_func = lambda x: FEATURES[x][0]
+        
+        selected_masks = st.multiselect(
+            "Select Features",
+            options=options,
+            default=options,
+            format_func=format_func,
+            label_visibility="collapsed"
+        )
 
         st.divider()
         st.subheader("🎛️ Parameters")
@@ -196,6 +202,10 @@ def main():
             if st.button(
                 "🚀 Execute Unified Pipeline", type="primary", width="stretch"
             ):
+                if not selected_masks:
+                    st.warning("⚠️ Please select at least one feature to extract!")
+                    st.stop()
+                    
                 with st.spinner("Analyzing Image..."):
                     st.info(
                         "🧬 Applying Training-Matched Normalization (Percentile + ImageNet)"
