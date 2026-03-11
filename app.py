@@ -90,9 +90,11 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Helper for robust weight selection
 def get_best_ckpt():
     candidates = [
-    "checkpoints/best.pt",
-    "checkpoints/ensemble_v3.pt",
-     "best.pt"]
+        "check/best.pt",
+        "checkpoints/best.pt",
+        "checkpoints/ensemble_v3.pt",
+        "best.pt"
+    ]
     for c in candidates:
         if Path(c).exists():
             return c
@@ -108,7 +110,13 @@ def main():
     with st.sidebar:
         st.header("⚙️ Model Config")
         ckpt_path = st.text_input("Segmentation Weights", get_best_ckpt())
-        yolo_path = st.text_input("YOLOv8 Weights", "checkpoints/yolov8s.pt")
+        
+        # Try to find the local YOLO model first
+        default_yolo = "check/yolo_svamitva_best.pt"
+        if not Path(default_yolo).exists():
+            default_yolo = "checkpoints/yolov8s.pt"
+            
+        yolo_path = st.text_input("YOLOv8 Weights", default_yolo)
 
         st.divider()
         st.subheader("🛠️ Extraction Tasks")
