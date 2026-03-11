@@ -141,18 +141,12 @@ def main():
         yolo_path = st.text_input("YOLOv8 Weights", default_yolo)
 
         st.divider()
-        st.subheader("🛠️ Extraction Prompts")
-        st.write("Type or select the features you want to extract:")
-        options = list(FEATURES.keys())
-        format_func = lambda x: FEATURES[x][0]
-        
-        selected_masks = st.multiselect(
-            "Select Features",
-            options=options,
-            default=options,
-            format_func=format_func,
-            label_visibility="collapsed"
-        )
+        st.subheader("🛠️ Extraction Tasks")
+        selected_masks = []
+        for key, meta in FEATURES.items():
+            enabled = st.checkbox(meta[0], value=True, key=f"feature_{key}")
+            if enabled:
+                selected_masks.append(key)
 
         st.divider()
         st.subheader("🎛️ Parameters")
