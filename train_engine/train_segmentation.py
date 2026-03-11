@@ -77,7 +77,9 @@ def parse_args():
         "--multi_gpu",
         action="store_true",
         default=True,
-        help="Use DataParallel on all GPUs",
+        help="Use DDP (primary) or DataParallel (fallback) on all GPUs. "
+             "For max efficiency, launch with: "
+             "torchrun --nproc_per_node=8 train_engine/train_segmentation.py",
     )
     p.add_argument(
         "--cache_features",

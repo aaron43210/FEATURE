@@ -13,6 +13,7 @@ Features:
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -21,7 +22,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
 from .config import TrainingConfig
@@ -274,20 +275,62 @@ class Trainer:
         # Handle Distributed or DataParallel
         raw_model = model.to(self.device)
         self.is_multi_gpu = False
+        self._ddp_initialized_here = False  # Track if we init'd dist
+
+        # Check if DDP was already initialized externally (e.g. torchrun)
         self.is_distributed = dist.is_available() and dist.is_initialized()
+
+        # Auto-initialize DDP if multiple GPUs available and not already init'd
+        if (
+            not self.is_distributed
+            and not config.force_cpu
+            and torch.cuda.is_available()
+            and torch.cuda.device_count() > 1
+        ):
+            n_gpus = torch.cuda.device_count()
+            try:
+                import os
+                # Set env vars for single-node DDP (auto-init)
+                os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+                os.environ.setdefault("MASTER_PORT", "29500")
+                os.environ.setdefault("RANK", "0")
+                os.environ.setdefault("WORLD_SIZE", "1")
+                backend = "nccl" if torch.cuda.is_available() else "gloo"
+                dist.init_process_group(backend=backend)
+                self.is_distributed = True
+                self._ddp_initialized_here = True
+                logger.info(
+                    "🚀 Auto-initialized DDP process group "
+                    "(backend=%s, %d GPUs)",
+                    backend, n_gpus,
+                )
+            except Exception as ddp_init_err:
+                logger.warning(
+                    "⚠️ DDP auto-init failed: %s. "
+                    "Will try DataParallel fallback.",
+                    ddp_init_err,
+                )
+
         self.rank = dist.get_rank() if self.is_distributed else 0
         self.world_size = dist.get_world_size() if self.is_distributed else 1
 
         if self.is_distributed:
+            # Use the local rank for device assignment
+            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+            self.device = torch.device(f"cuda:{local_rank}")
+            raw_model = raw_model.to(self.device)
+
+            # Convert BatchNorm → SyncBatchNorm for multi-GPU consistency
+            raw_model = nn.SyncBatchNorm.convert_sync_batchnorm(raw_model)
+
             logger.info(
-                f"🚀 Activating DDP on rank {self.rank}/{self.world_size} "
-                f"(Device: {self.device})"
+                "🚀 Activating DDP on rank %d/%d (Device: %s)",
+                self.rank, self.world_size, self.device,
             )
             self.model = DDP(
                 raw_model,
-                device_ids=(
-                    [self.device.index] if self.device.type == "cuda" else None
-                ),
+                device_ids=[self.device.index],
+                find_unused_parameters=False,
             )
             self.is_multi_gpu = True
         elif (
@@ -295,33 +338,69 @@ class Trainer:
             and torch.cuda.device_count() > 1
             and not config.force_cpu
         ):
+            # Fallback: DataParallel (if DDP init failed)
             n_gpus = torch.cuda.device_count()
-            # DataParallel requires model on device_ids[0] = cuda:0
             try:
                 self.device = torch.device("cuda:0")
                 raw_model = raw_model.to(self.device)
                 logger.info(
-                    f"🚀 Activating DataParallel on "
-                    f"{n_gpus} GPUs (Master: {self.device})"
+                    "🚀 DDP unavailable, using DataParallel fallback "
+                    "on %d GPUs (Master: %s)",
+                    n_gpus, self.device,
                 )
                 self.model = nn.DataParallel(raw_model)
                 self.is_multi_gpu = True
             except RuntimeError as dp_err:
                 logger.warning(
-                    f"⚠️ DataParallel failed: {dp_err}. " f"Falling back to single GPU."
+                    "⚠️ DataParallel also failed: %s. "
+                    "Falling back to single GPU.",
+                    dp_err,
                 )
                 self.model = raw_model
                 self.is_multi_gpu = False
         else:
             self.model = raw_model
             if not config.force_cpu:
-                n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+                n_gpus = (
+                    torch.cuda.device_count()
+                    if torch.cuda.is_available() else 0
+                )
                 if n_gpus <= 1:
-                    logger.info(f"Multi-GPU skipped: {n_gpus} GPU(s) visible.")
+                    logger.info(
+                        "Multi-GPU skipped: %d GPU(s) visible.", n_gpus
+                    )
             else:
                 logger.info("Multi-GPU skipped: force_cpu is True.")
 
-        self.train_loader = train_loader
+        # Wrap data loaders with DistributedSampler for DDP
+        if self.is_distributed and not isinstance(
+            getattr(train_loader, "sampler", None),
+            DistributedSampler,
+        ):
+            ddp_sampler = DistributedSampler(
+                train_loader.dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+            )
+            self.train_loader = DataLoader(
+                train_loader.dataset,
+                batch_size=train_loader.batch_size,
+                sampler=ddp_sampler,
+                num_workers=getattr(
+                    train_loader, "num_workers", 0
+                ),
+                pin_memory=True,
+                drop_last=True,
+            )
+            logger.info(
+                "Wrapped train DataLoader with "
+                "DistributedSampler (rank=%d/%d)",
+                self.rank, self.world_size,
+            )
+        else:
+            self.train_loader = train_loader
+
         self.val_loader = val_loader
         self.loss_fn = loss_fn.to(self.device)
 
@@ -563,6 +642,11 @@ class Trainer:
             f"{self.ckpt_mgr.best_score:.4f} at epoch "
             f"{self.ckpt_mgr.best_epoch}"
         )
+
+        # Cleanup DDP process group if we initialized it
+        if self._ddp_initialized_here and dist.is_initialized():
+            dist.destroy_process_group()
+            logger.info("DDP process group destroyed.")
 
     def _train_epoch(self, epoch: int) -> Tuple[float, Dict[str, float]]:
         """Run one training epoch."""
