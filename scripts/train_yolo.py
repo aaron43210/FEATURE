@@ -117,10 +117,7 @@ def main():
     try:
         from ultralytics import YOLO
     except ImportError:
-        logger.error(
-            "Ultralytics not installed. Run:\n"
-            "  pip install ultralytics"
-        )
+        logger.error("Ultralytics not installed. Run:\n" "  pip install ultralytics")
         sys.exit(1)
 
     # Select device

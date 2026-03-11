@@ -20,8 +20,7 @@ DEFAULT_SAM2_MODEL_CFG = "configs/sam2.1/sam2.1_hiera_tiny.yaml"
 
 # Default SAM2.1 checkpoint URL
 SAM2_CHECKPOINT_URL = (
-    "https://dl.fbaipublicfiles.com/segment_anything_2"
-    "/092824/sam2.1_hiera_tiny.pt"
+    "https://dl.fbaipublicfiles.com/segment_anything_2" "/092824/sam2.1_hiera_tiny.pt"
 )
 
 
@@ -271,10 +270,7 @@ class SAM2Encoder(nn.Module):
                 c2 = self.layer2(c1)  # stride 8
                 c3 = self.layer3(c2)  # stride 16
                 c4 = self.layer4(c3)  # stride 32
-                return {
-                    "feat_s4": c1, "feat_s8": c2,
-                    "feat_s16": c3, "feat_s32": c4
-                }
+                return {"feat_s4": c1, "feat_s8": c2, "feat_s16": c3, "feat_s32": c4}
 
         encoder = ResNetEncoder(resnet)
         channels = {

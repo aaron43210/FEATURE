@@ -25,9 +25,7 @@ class TrainingConfig:
     pretrained: bool = True
     num_roof_classes: int = 5
     dropout: float = 0.1
-    sam2_checkpoint: Optional[Path] = Path(
-        "checkpoints/sam2.1_hiera_tiny.pt"
-    )
+    sam2_checkpoint: Optional[Path] = Path("checkpoints/sam2.1_hiera_tiny.pt")
     sam2_model_cfg: str = DEFAULT_SAM2_MODEL_CFG
 
     # ── Training ─────────────────────────────────────────────────────────────
@@ -91,8 +89,7 @@ class TrainingConfig:
         # Ensure Paths are correctly typed
         if isinstance(self.train_dirs, list):
             self.train_dirs = [
-                Path(d) if not isinstance(d, Path)
-                else d for d in self.train_dirs
+                Path(d) if not isinstance(d, Path) else d for d in self.train_dirs
             ]
         if self.val_dir and not isinstance(self.val_dir, Path):
             self.val_dir = Path(self.val_dir)

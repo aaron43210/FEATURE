@@ -35,7 +35,7 @@ import numpy as np
 import rasterio
 import torch
 from rasterio.windows import Window
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, Subset
 
 # Global Seed for reproducibility
 random.seed(42)

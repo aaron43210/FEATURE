@@ -95,7 +95,7 @@ def get_best_ckpt():
         "check/best.pt",
         "checkpoints/best.pt",
         "checkpoints/ensemble_v3.pt",
-        "best.pt"
+        "best.pt",
     ]
     for c in candidates:
         if Path(c).exists():
@@ -132,12 +132,12 @@ def main():
     with st.sidebar:
         st.header("⚙️ Model Config")
         ckpt_path = st.text_input("Segmentation Weights", get_best_ckpt())
-        
+
         # Try to find the local YOLO model first
         default_yolo = "check/yolo_svamitva_best.pt"
         if not Path(default_yolo).exists():
             default_yolo = "checkpoints/yolov8s.pt"
-            
+
         yolo_path = st.text_input("YOLOv8 Weights", default_yolo)
 
         st.divider()
@@ -153,9 +153,7 @@ def main():
         threshold = st.slider("Confidence Threshold", 0.05, 0.95, 0.50)
         yolo_conf = st.slider("YOLO Confidence", 0.05, 0.95, 0.25)
         yolo_iou = st.slider("YOLO NMS IoU", 0.10, 0.90, 0.45)
-        use_tta = st.checkbox(
-            "Enable TTA (higher quality, slower)", value=False
-        )
+        use_tta = st.checkbox("Enable TTA (higher quality, slower)", value=False)
         tile_size = st.select_slider(
             "Inference Tile Size",
             options=[512, 768, 1024, 1280, 1536],
@@ -186,9 +184,7 @@ def main():
             st.error(f"Unsupported file type: {ext}")
             st.stop()
 
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(uploaded.getvalue())
             tif_path = Path(tmp.name)
             _temp_files.append(tmp.name)
@@ -251,13 +247,10 @@ def main():
                                 for p in Path(out_dir).glob("*.gpkg"):
                                     zf.write(p, p.name)
                             st.download_button(
-                                "📩 Download ZIP",
-                                zip_buf.getvalue(),
-                                "results.zip"
+                                "📩 Download ZIP", zip_buf.getvalue(), "results.zip"
                             )
                 else:
-                    st.info(
-                        "📦 GIS Export disabled for non-geospatial image formats.")
+                    st.info("📦 GIS Export disabled for non-geospatial image formats.")
 
             import cv2
 
@@ -285,8 +278,7 @@ def main():
                     thumb = np.clip(t / vmax, 0.0, 1.0) * 255.0
                 thumb = thumb.astype(np.uint8)
 
-            tab_global, tab_detail = st.tabs(
-                ["🌍 Global Overview", "🔍 Detail View"])
+            tab_global, tab_detail = st.tabs(["🌍 Global Overview", "🔍 Detail View"])
 
             with tab_global:
                 st.subheader("Ensemble Overview")
@@ -310,8 +302,7 @@ def main():
                         )
                         for c in range(3):
                             overlay[binary, c] = (
-                                overlay[binary, c] * (1 - alpha) +
-                                color[c] * alpha
+                                overlay[binary, c] * (1 - alpha) + color[c] * alpha
                             )
                 st.image(overlay.astype(np.uint8), width="stretch")
 
@@ -342,18 +333,13 @@ def main():
 
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        st.image(
-    thumb.astype(
-        np.uint8),
-         caption="Original Image")
+                        st.image(thumb.astype(np.uint8), caption="Original Image")
                     with col_b:
                         if selected == "roof_type_mask":
                             import matplotlib.pyplot as plt
 
                             cmap = plt.get_cmap("tab10")
-                            c_map = (cmap(m_disp)[:, :, :3] * 255).astype(
-                                np.uint8
-                            )
+                            c_map = (cmap(m_disp)[:, :, :3] * 255).astype(np.uint8)
                             c_map[m_disp == 0] = 0
                             st.image(c_map, caption=f"{f_name} Map")
                         else:
@@ -361,10 +347,7 @@ def main():
                             binary = m_disp > threshold
                             for i in range(3):
                                 c_mask[binary, i] = f_color[i]
-                            st.image(
-                                c_mask.astype(np.uint8),
-                                caption=f"{f_name} Mask"
-                            )
+                            st.image(c_mask.astype(np.uint8), caption=f"{f_name} Mask")
 
                     st.divider()
                     st.write(f"**{f_name} Combined Overlay**")
@@ -375,18 +358,14 @@ def main():
                         import matplotlib.pyplot as plt
 
                         cmap = plt.get_cmap("tab10")
-                        c_roof = (
-                            cmap(m_disp)[:, :, :3] * 255
-                        ).astype(np.uint8)
+                        c_roof = (cmap(m_disp)[:, :, :3] * 255).astype(np.uint8)
                         f_ovl[bin_mask] = (
-                            f_ovl[bin_mask] * (1 - alpha) +
-                            c_roof[bin_mask] * alpha
+                            f_ovl[bin_mask] * (1 - alpha) + c_roof[bin_mask] * alpha
                         )
                     else:
                         for i in range(3):
                             f_ovl[bin_mask, i] = (
-                                f_ovl[bin_mask, i] * (1 - alpha) +
-                                f_color[i] * alpha
+                                f_ovl[bin_mask, i] * (1 - alpha) + f_color[i] * alpha
                             )
                     st.image(f_ovl.astype(np.uint8), width="stretch")
 

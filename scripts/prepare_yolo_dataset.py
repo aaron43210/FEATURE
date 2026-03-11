@@ -242,7 +242,8 @@ def process_map_directory(
         gdf = gpd.read_file(shp_path)
         logger.info(
             "  Waterbody SHP: %s, %d features",
-            shp_path.name, len(gdf),
+            shp_path.name,
+            len(gdf),
         )
         for _, row in gdf.iterrows():
             geom = row.geometry
@@ -343,8 +344,9 @@ def process_map_directory(
                 img_out = out_images / f"{tile_name}.png"
                 # Convert to uint8 RGB
                 if tile_data.dtype == np.uint16:
-                    tile_data = (tile_data.astype(
-                        np.float32) / 65535.0 * 255).astype( np.uint8 )
+                    tile_data = (tile_data.astype(np.float32) / 65535.0 * 255).astype(
+                        np.uint8
+                    )
                 elif tile_data.dtype != np.uint8:
                     tile_data = np.clip(tile_data, 0, 255).astype(np.uint8)
 

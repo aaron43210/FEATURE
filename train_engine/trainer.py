@@ -13,7 +13,6 @@ Features:
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -290,6 +289,7 @@ class Trainer:
             n_gpus = torch.cuda.device_count()
             try:
                 import os
+
                 # Set env vars for single-node DDP (auto-init)
                 os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
                 os.environ.setdefault("MASTER_PORT", "29500")
@@ -300,14 +300,13 @@ class Trainer:
                 self.is_distributed = True
                 self._ddp_initialized_here = True
                 logger.info(
-                    "🚀 Auto-initialized DDP process group "
-                    "(backend=%s, %d GPUs)",
-                    backend, n_gpus,
+                    "🚀 Auto-initialized DDP process group " "(backend=%s, %d GPUs)",
+                    backend,
+                    n_gpus,
                 )
             except Exception as ddp_init_err:
                 logger.warning(
-                    "⚠️ DDP auto-init failed: %s. "
-                    "Will try DataParallel fallback.",
+                    "⚠️ DDP auto-init failed: %s. " "Will try DataParallel fallback.",
                     ddp_init_err,
                 )
 
@@ -325,7 +324,9 @@ class Trainer:
 
             logger.info(
                 "🚀 Activating DDP on rank %d/%d (Device: %s)",
-                self.rank, self.world_size, self.device,
+                self.rank,
+                self.world_size,
+                self.device,
             )
             self.model = DDP(
                 raw_model,
@@ -346,14 +347,14 @@ class Trainer:
                 logger.info(
                     "🚀 DDP unavailable, using DataParallel fallback "
                     "on %d GPUs (Master: %s)",
-                    n_gpus, self.device,
+                    n_gpus,
+                    self.device,
                 )
                 self.model = nn.DataParallel(raw_model)
                 self.is_multi_gpu = True
             except RuntimeError as dp_err:
                 logger.warning(
-                    "⚠️ DataParallel also failed: %s. "
-                    "Falling back to single GPU.",
+                    "⚠️ DataParallel also failed: %s. " "Falling back to single GPU.",
                     dp_err,
                 )
                 self.model = raw_model
@@ -361,14 +362,9 @@ class Trainer:
         else:
             self.model = raw_model
             if not config.force_cpu:
-                n_gpus = (
-                    torch.cuda.device_count()
-                    if torch.cuda.is_available() else 0
-                )
+                n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
                 if n_gpus <= 1:
-                    logger.info(
-                        "Multi-GPU skipped: %d GPU(s) visible.", n_gpus
-                    )
+                    logger.info("Multi-GPU skipped: %d GPU(s) visible.", n_gpus)
             else:
                 logger.info("Multi-GPU skipped: force_cpu is True.")
 
@@ -387,16 +383,14 @@ class Trainer:
                 train_loader.dataset,
                 batch_size=train_loader.batch_size,
                 sampler=ddp_sampler,
-                num_workers=getattr(
-                    train_loader, "num_workers", 0
-                ),
+                num_workers=getattr(train_loader, "num_workers", 0),
                 pin_memory=True,
                 drop_last=True,
             )
             logger.info(
-                "Wrapped train DataLoader with "
-                "DistributedSampler (rank=%d/%d)",
-                self.rank, self.world_size,
+                "Wrapped train DataLoader with " "DistributedSampler (rank=%d/%d)",
+                self.rank,
+                self.world_size,
             )
         else:
             self.train_loader = train_loader
@@ -468,7 +462,7 @@ class Trainer:
         # Feature Cache
         self.feature_cache = FeatureCache(
             cache_dir=str(config.project_root / "feature_cache"),
-            enabled=config.cache_features
+            enabled=config.cache_features,
         )
 
         # TensorBoard writer (only on rank 0)
@@ -686,11 +680,11 @@ class Trainer:
                         m = self.model.module if self.is_multi_gpu else self.model
                         fused_feat = m.decoder(cached_feats)
                         predictions = m.heads(fused_feat)
-                    
+
                 if predictions is None:
                     # Normal forward if no cache or backbone is training
                     predictions = self.model(images)
-                    
+
                     # Store features for next time if backbone is frozen
                     if self.feature_cache.enabled and not self.model.encoder.training:
                         m = self.model.module if self.is_multi_gpu else self.model

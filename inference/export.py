@@ -130,8 +130,10 @@ def _mask_to_geometries(
         geoms = [g for g in geoms if g.length > min_val]
 
         # ── Stage 3: Chaikin smoothing on each line ──
-        geoms = [refine_line(g, feature_key) if isinstance(g, LineString) else g
-                 for g in geoms]
+        geoms = [
+            refine_line(g, feature_key) if isinstance(g, LineString) else g
+            for g in geoms
+        ]
 
         # ── Stage 4: Dead-end snapping (connect broken endpoints) ──
         geoms = snap_line_endpoints(geoms, feature_key)
@@ -235,7 +237,7 @@ class GISExporter:
             if key not in results or not isinstance(results[key], np.ndarray):
                 continue
 
-            logger.info("Vectorizing %s...", config['name'])
+            logger.info("Vectorizing %s...", config["name"])
             mask = results[key]
 
             if key == "roof_type_mask":
@@ -294,9 +296,7 @@ class GISExporter:
 
             for key, items in det_by_key.items():
                 name = FEATURE_CONFIG[key]["name"]
-                exported_paths[f"det_{key}"] = self._write_records(
-                    items, name
-                )
+                exported_paths[f"det_{key}"] = self._write_records(items, name)
 
         return exported_paths
 
@@ -312,9 +312,7 @@ class GISExporter:
         )
         out_path = self.output_dir / f"{safe_name}.gpkg"
         gdf.to_file(out_path, driver="GPKG")
-        logger.info(
-            "  Saved %d features to %s", len(gdf), out_path.name
-        )
+        logger.info("  Saved %d features to %s", len(gdf), out_path.name)
         return out_path
 
     def _write_gpkg(
@@ -349,9 +347,7 @@ class GISExporter:
         gdf = gpd.GeoDataFrame(records, crs=self.crs)
         out_path = self.output_dir / f"{name}.gpkg"
         gdf.to_file(out_path, driver="GPKG")
-        logger.info(
-            "  Saved %d features to %s", len(gdf), out_path.name
-        )
+        logger.info("  Saved %d features to %s", len(gdf), out_path.name)
         return out_path
 
 

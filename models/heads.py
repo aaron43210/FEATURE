@@ -13,8 +13,7 @@ import torch.nn as nn
 class ConvBNReLU(nn.Module):
     """Conv → BatchNorm → ReLU helper block."""
 
-    def __init__(self, in_ch: int, out_ch: int,
-                 kernel: int = 3, padding: int = 1):
+    def __init__(self, in_ch: int, out_ch: int, kernel: int = 3, padding: int = 1):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, kernel, padding=padding, bias=False),
@@ -111,18 +110,10 @@ class DLinkBlock(nn.Module):
 
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
-        self.d1 = nn.Conv2d(
-            in_ch, out_ch, 3, padding=1, dilation=1, bias=False
-        )
-        self.d2 = nn.Conv2d(
-            in_ch, out_ch, 3, padding=2, dilation=2, bias=False
-        )
-        self.d4 = nn.Conv2d(
-            in_ch, out_ch, 3, padding=4, dilation=4, bias=False
-        )
-        self.d8 = nn.Conv2d(
-            in_ch, out_ch, 3, padding=8, dilation=8, bias=False
-        )
+        self.d1 = nn.Conv2d(in_ch, out_ch, 3, padding=1, dilation=1, bias=False)
+        self.d2 = nn.Conv2d(in_ch, out_ch, 3, padding=2, dilation=2, bias=False)
+        self.d4 = nn.Conv2d(in_ch, out_ch, 3, padding=4, dilation=4, bias=False)
+        self.d8 = nn.Conv2d(in_ch, out_ch, 3, padding=8, dilation=8, bias=False)
         self.fuse = nn.Sequential(
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
@@ -171,8 +162,9 @@ class DetectionHead(nn.Module):
     Combines centripetal-shift style features with segmentation.
     """
 
-    def __init__(self, in_channels: int = 256, mid_channels: int = 64,
-                 dropout: float = 0.1):
+    def __init__(
+        self, in_channels: int = 256, mid_channels: int = 64, dropout: float = 0.1
+    ):
         super().__init__()
         self.stem = ConvBNReLU(in_channels, mid_channels)
         # Multi-scale aggregation
@@ -201,8 +193,9 @@ class PointHead(nn.Module):
     Uses global context aggregation before predicting.
     """
 
-    def __init__(self, in_channels: int = 256, mid_channels: int = 64,
-                 dropout: float = 0.1):
+    def __init__(
+        self, in_channels: int = 256, mid_channels: int = 64, dropout: float = 0.1
+    ):
         super().__init__()
         # Global context branch
         self.global_ctx = nn.Sequential(
@@ -248,9 +241,7 @@ def create_all_heads(
     heads = nn.ModuleDict()
 
     # Building (dual output)
-    heads["building"] = BuildingHead(
-        in_channels, 128, num_roof_classes, dropout
-    )
+    heads["building"] = BuildingHead(in_channels, 128, num_roof_classes, dropout)
 
     # Polygon heads
     heads["road"] = BinaryHead(in_channels, 64, dropout)

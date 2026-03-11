@@ -133,9 +133,7 @@ class RoofTypeMetrics:
                 for c in range(self.num_classes):
                     c_mask = targets == c
                     if c_mask.sum() > 0:
-                        self.per_class_correct[c] += (
-                            (preds[c_mask] == c).sum().item()
-                        )
+                        self.per_class_correct[c] += (preds[c_mask] == c).sum().item()
                         self.per_class_total[c] += c_mask.sum().item()
 
     @property

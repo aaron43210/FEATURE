@@ -32,9 +32,9 @@ POSTPROCESS_CONFIG: Dict[str, dict] = {
         "closing_radius": 3,
         "fill_holes": True,
         "orthogonalize": True,
-        "min_rect_area": 50.0,     # m² — below this, use minAreaRect
-        "angle_snap_deg": 5.0,     # snap edges within ±5° of dominant angle
-        "threshold": 0.45,         # slightly lower for better recall
+        "min_rect_area": 50.0,  # m² — below this, use minAreaRect
+        "angle_snap_deg": 5.0,  # snap edges within ±5° of dominant angle
+        "threshold": 0.45,  # slightly lower for better recall
     },
     "road_mask": {
         "closing_radius": 7,
@@ -48,7 +48,7 @@ POSTPROCESS_CONFIG: Dict[str, dict] = {
         "prune_branches": True,
         "min_branch_px": 15,
         "chaikin_iters": 3,
-        "snap_distance": 10.0,    # pixels
+        "snap_distance": 10.0,  # pixels
         "threshold": 0.45,
     },
     "waterbody_mask": {
@@ -112,6 +112,7 @@ def get_threshold(feature_key: str) -> float:
 # 1. MASK-LEVEL REFINEMENT  (operates on binary masks)
 # ═══════════════════════════════════════════════════════════════════
 
+
 def refine_mask(mask: np.ndarray, feature_key: str) -> np.ndarray:
     """
     Apply morphological closing and hole-filling to a binary mask
@@ -146,6 +147,7 @@ def refine_mask(mask: np.ndarray, feature_key: str) -> np.ndarray:
 # ═══════════════════════════════════════════════════════════════════
 # 2. SKELETON PRUNING  (removes spurious branches)
 # ═══════════════════════════════════════════════════════════════════
+
 
 def prune_skeleton(skeleton: np.ndarray, feature_key: str) -> np.ndarray:
     """
@@ -209,6 +211,7 @@ def prune_skeleton(skeleton: np.ndarray, feature_key: str) -> np.ndarray:
 # 3. POLYGON REFINEMENT
 # ═══════════════════════════════════════════════════════════════════
 
+
 def _dominant_angle(coords: np.ndarray) -> float:
     """
     Find the dominant edge orientation angle in a polygon using
@@ -239,8 +242,9 @@ def _dominant_angle(coords: np.ndarray) -> float:
     return (bins[dominant_bin] + bins[dominant_bin + 1]) / 2
 
 
-def _snap_edges_to_angle(coords: np.ndarray, dominant: float,
-                         snap_tol_deg: float = 5.0) -> np.ndarray:
+def _snap_edges_to_angle(
+    coords: np.ndarray, dominant: float, snap_tol_deg: float = 5.0
+) -> np.ndarray:
     """
     Snap polygon edges to be aligned with the dominant angle or
     perpendicular to it (±snap_tol_deg tolerance).
@@ -257,8 +261,12 @@ def _snap_edges_to_angle(coords: np.ndarray, dominant: float,
         angle = np.arctan2(edge[1], edge[0])
 
         # Check if close to dominant or dominant + π/2
-        for target in [dominant, dominant + np.pi / 2,
-                       dominant + np.pi, dominant + 3 * np.pi / 2]:
+        for target in [
+            dominant,
+            dominant + np.pi / 2,
+            dominant + np.pi,
+            dominant + 3 * np.pi / 2,
+        ]:
             diff = abs(((angle - target + np.pi) % (2 * np.pi)) - np.pi)
             if diff < snap_tol:
                 # Snap to target angle
@@ -271,8 +279,9 @@ def _snap_edges_to_angle(coords: np.ndarray, dominant: float,
     return np.array(result)
 
 
-def orthogonalize_polygon(poly: Polygon, min_rect_area: float = 50.0,
-                          snap_tol_deg: float = 5.0) -> Polygon:
+def orthogonalize_polygon(
+    poly: Polygon, min_rect_area: float = 50.0, snap_tol_deg: float = 5.0
+) -> Polygon:
     """
     Orthogonalize a building/bridge polygon:
     1. For small polygons: use minimum rotated rectangle.
@@ -351,8 +360,10 @@ def refine_polygon(poly: Polygon, feature_key: str) -> Polygon:
 # 4. LINE REFINEMENT (Chaikin smoothing + dead-end snapping)
 # ═══════════════════════════════════════════════════════════════════
 
-def _chaikin_smooth(coords: np.ndarray, iters: int = 3,
-                    keep_ends: bool = True) -> np.ndarray:
+
+def _chaikin_smooth(
+    coords: np.ndarray, iters: int = 3, keep_ends: bool = True
+) -> np.ndarray:
     """
     Chaikin corner-cutting algorithm for line smoothing.
     Each iteration replaces each segment A→B with two points
@@ -470,10 +481,17 @@ def snap_line_endpoints(lines: list, feature_key: str) -> list:
 # 5. CRF PROBABILITY MAP REFINEMENT  (optional, requires pydensecrf)
 # ═══════════════════════════════════════════════════════════════════
 
-def crf_refine(prob_map: np.ndarray, image_rgb: Optional[np.ndarray] = None,
-               n_iters: int = 5, pos_w: float = 3.0, pos_xy_std: float = 3.0,
-               bi_w: float = 5.0, bi_xy_std: float = 50.0,
-               bi_rgb_std: float = 5.0) -> np.ndarray:
+
+def crf_refine(
+    prob_map: np.ndarray,
+    image_rgb: Optional[np.ndarray] = None,
+    n_iters: int = 5,
+    pos_w: float = 3.0,
+    pos_xy_std: float = 3.0,
+    bi_w: float = 5.0,
+    bi_xy_std: float = 50.0,
+    bi_rgb_std: float = 5.0,
+) -> np.ndarray:
     """
     Apply Dense CRF to refine a probability map using image appearance
     as a guide. Sharpens fuzzy boundaries to align with visual edges.
@@ -514,8 +532,10 @@ def crf_refine(prob_map: np.ndarray, image_rgb: Optional[np.ndarray] = None,
 
     # Position-based pairwise (smoothness)
     d.addPairwiseGaussian(
-        sxy=pos_xy_std, compat=pos_w,
-        kernel=dcrf.DIAG_KERNEL, normalization=dcrf.NORMALIZE_SYMMETRIC,
+        sxy=pos_xy_std,
+        compat=pos_w,
+        kernel=dcrf.DIAG_KERNEL,
+        normalization=dcrf.NORMALIZE_SYMMETRIC,
     )
 
     # Appearance-based pairwise (if image available)
@@ -524,8 +544,12 @@ def crf_refine(prob_map: np.ndarray, image_rgb: Optional[np.ndarray] = None,
         if img.ndim == 2:
             img = np.stack([img] * 3, axis=-1)
         d.addPairwiseBilateral(
-            sxy=bi_xy_std, srgb=bi_rgb_std, rgbim=img, compat=bi_w,
-            kernel=dcrf.DIAG_KERNEL, normalization=dcrf.NORMALIZE_SYMMETRIC,
+            sxy=bi_xy_std,
+            srgb=bi_rgb_std,
+            rgbim=img,
+            compat=bi_w,
+            kernel=dcrf.DIAG_KERNEL,
+            normalization=dcrf.NORMALIZE_SYMMETRIC,
         )
 
     Q = d.inference(n_iters)

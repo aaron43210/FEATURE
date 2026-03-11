@@ -38,11 +38,7 @@ def parse_args():
         default=["data/MAP1"],
         help="Directories containing MAP*.tif + shapefiles",
     )
-    p.add_argument(
-        "--val_dir",
-        default=None,
-        help="Separate validation directory"
-    )
+    p.add_argument("--val_dir", default=None, help="Separate validation directory")
     p.add_argument("--val_split", type=float, default=0.2)
     p.add_argument("--split_mode", default="map", choices=["map", "tile"])
 
@@ -67,30 +63,22 @@ def parse_args():
     )
 
     # DGX Specifics
-    p.add_argument(
-        "--checkpoint_dir",
-        default="check",
-        help="Requested 'check' dir"
-    )
+    p.add_argument("--checkpoint_dir", default="check", help="Requested 'check' dir")
     p.add_argument("--name", default="dgx_ensemble_v3", help="Experiment name")
     p.add_argument(
         "--multi_gpu",
         action="store_true",
         default=True,
         help="Use DDP (primary) or DataParallel (fallback) on all GPUs. "
-             "For max efficiency, launch with: "
-             "torchrun --nproc_per_node=8 train_engine/train_segmentation.py",
+        "For max efficiency, launch with: "
+        "torchrun --nproc_per_node=8 train_engine/train_segmentation.py",
     )
     p.add_argument(
         "--cache_features",
         action="store_true",
-        help="Cache frozen SAM2 backbone disk features to drastically speed up early epochs."
+        help="Cache frozen SAM2 backbone disk features to drastically speed up early epochs.",
     )
-    p.add_argument(
-        "--quick_test",
-        action="store_true",
-        help="3-epoch smoke test"
-    )
+    p.add_argument("--quick_test", action="store_true", help="3-epoch smoke test")
 
     return p.parse_args()
 

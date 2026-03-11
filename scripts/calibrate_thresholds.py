@@ -41,7 +41,9 @@ BINARY_TASKS = [
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Calibrate per-task segmentation thresholds.")
+    p = argparse.ArgumentParser(
+        description="Calibrate per-task segmentation thresholds."
+    )
     p.add_argument("--checkpoint", default="checkpoints/best.pt")
     p.add_argument("--train_dirs", nargs="+", default=["data/MAP1"])
     p.add_argument("--val_dir", default=None)
@@ -164,7 +166,10 @@ def summarize(
                 best_thr = thr
 
         best_thresholds[f"{task}_mask"] = round(float(best_thr), 4)
-        details[f"{task}_mask"] = {"best_iou": float(best_iou), "threshold": float(best_thr)}
+        details[f"{task}_mask"] = {
+            "best_iou": float(best_iou),
+            "threshold": float(best_thr),
+        }
 
     return best_thresholds, details
 
