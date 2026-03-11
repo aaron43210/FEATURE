@@ -340,11 +340,17 @@ def refine_polygon(poly: Polygon, feature_key: str) -> Polygon:
 
     # Orthogonalization for man-made structures
     if cfg.get("orthogonalize", False):
-        poly = orthogonalize_polygon(
-            poly,
-            min_rect_area=cfg.get("min_rect_area", 50.0),
-            snap_tol_deg=cfg.get("angle_snap_deg", 5.0),
-        )
+        try:
+            from inference.fer import regularize_polygon_shapely
+
+            poly = regularize_polygon_shapely(poly)
+        except Exception as e:
+            logger.debug("Advanced FER failed: %s, falling back", e)
+            poly = orthogonalize_polygon(
+                poly,
+                min_rect_area=cfg.get("min_rect_area", 50.0),
+                snap_tol_deg=cfg.get("angle_snap_deg", 5.0),
+            )
 
     # Convex hull fallback for tiny natural features
     convex_area = cfg.get("convex_hull_area", 0)
