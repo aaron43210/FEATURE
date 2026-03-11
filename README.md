@@ -63,11 +63,21 @@ cd FEATURE
 pip install -r requirements.txt
 ```
 
-### Training (DGX Optimized)
+### Training (Unified Pipeline)
+The `train_all.py` script unifies the three-stage training process into a single command, automating dataset preparation and multi-model training.
+
 ```bash
-# Multi-GPU training on 10 village datasets
-torchrun --nproc_per_node=8 train.py --epochs 150 --train_dirs ./data/villages/
+# Train everything (Segmentation + YOLO)
+# For 10 villages on DGX (8 GPUs), this takes ~8-12 hours
+python train_all.py --train_dirs ./data/villages/ --epochs 150 --batch_size 16 --cache_features
 ```
+
+**Workflow:**
+1.  **YOLO Prep**: Converts shapefile points to YOLO bounding boxes and image tiles.
+2.  **Segmentation**: Trains the SAM2+FPN ensemble for buildings, roads, water, and roof types.
+3.  **YOLO Train**: Trains the YOLOv8 point detector for high-precision utility localization.
+
+For DGX environments, the script automatically leverages all available GPUs via DataParallel/DDP.
 
 ### Inference
 ```bash
