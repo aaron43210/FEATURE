@@ -270,6 +270,8 @@ class Trainer:
         self.device = get_device(config)
         logger.info(f"Using device: {self.device}")
 
+        self.was_interrupted = False
+
         # Handle Distributed or DataParallel
         raw_model = model.to(self.device)
         self.is_multi_gpu = False
@@ -659,7 +661,7 @@ class Trainer:
             batch = move_targets(batch, self.device)
             images = batch["image"]
 
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
 
             with torch.autocast(
                 device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp
@@ -703,6 +705,10 @@ class Trainer:
 
         avg_loss = total_loss / max(n_batches, 1)
         avg_breakdown = {k: v / max(n_batches, 1) for k, v in breakdown_sums.items()}
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         return avg_loss, avg_breakdown
 
     @torch.no_grad()
@@ -741,4 +747,8 @@ class Trainer:
         avg_loss = total_loss / max(n_batches, 1)
         metrics = self.metrics.compute()
         metrics["val_loss"] = avg_loss
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         return avg_loss, metrics

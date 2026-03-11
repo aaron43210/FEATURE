@@ -1,5 +1,5 @@
 """
-Unified SVAMITVA segmentation model (SAM2 encoder + multi-head decoder).
+Unified SVAMITVA segmentation model (SegFormer encoder + UPerNet/FPN decoder).
 
 This model predicts all raster outputs directly:
 - building_mask, roof_type_mask

@@ -3,7 +3,7 @@
 🚀 SVAMITVA Unified Training Pipeline (Hackathon V3)
 Developed by Students of Digital University Kerala (DUK)
 
-This script orchestrates the training of both the SAM2-based segmentation
+This script orchestrates the training of both the SegFormer-based segmentation
 model and the YOLOv8 point-detection model simultaneously.
 
 Usage:
@@ -49,9 +49,6 @@ def parse_args():
     p.add_argument("--yolo_batch", type=int, default=16, help="Batch size for YOLO")
 
     # Optimization
-    p.add_argument(
-        "--cache_features", action="store_true", help="Enable SAM2 feature caching"
-    )
     p.add_argument(
         "--multi_gpu",
         action="store_true",
@@ -122,8 +119,6 @@ def main():
         + args.train_dirs
         + ["--checkpoint_dir", "checkpoints", "--name", "ensemble_v3_final"]
     )
-    if args.cache_features:
-        seg_cmd.append("--cache_features")
 
     run_step(seg_cmd, "Segmentation Training")
 
