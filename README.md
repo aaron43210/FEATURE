@@ -64,12 +64,12 @@ pip install -r requirements.txt
 ```
 
 ### Training (Unified Pipeline)
-The `train_all.py` script unifies the three-stage training process into a single command, automating dataset preparation and multi-model training.
+The `train.py` script unifies the three-stage training process into a single command, automating dataset preparation and multi-model training.
 
 ```bash
 # Train everything (Segmentation + YOLO)
 # For 10 villages on DGX (8 GPUs), this takes ~8-12 hours
-python train_all.py --train_dirs ./data/villages/ --epochs 150 --batch_size 16 --cache_features
+python train.py --train_dirs ./data/villages/ --epochs 150 --batch_size 16 --cache_features
 ```
 
 **Workflow:**
