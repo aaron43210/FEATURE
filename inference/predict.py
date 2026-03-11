@@ -749,14 +749,15 @@ class TiledPredictor:
 
             # YOLO point detection
             if self.yolo is not None and selected_point_keys:
-                # Convert to uint8 for YOLO
-                tile_u8 = np.clip(tile_img * 255, 0, 255).astype(np.uint8)
-                self._run_yolo_tile(
-                    tile_u8,
-                    x0,
-                    y0,
-                    selected_point_keys,
-                    raw_detections,
+                raw_detections.extend(
+                    self._run_yolo_tile(
+                        tile_img=tile_img,
+                        x0=x0,
+                        y0=y0,
+                        tw_act=tw_act,
+                        th_act=th_act,
+                        selected_point_keys=selected_point_keys,
+                    )
                 )
 
         # Normalize by weight map
