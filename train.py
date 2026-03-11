@@ -15,6 +15,9 @@ import logging
 import subprocess
 import sys
 import time
+import random
+import torch
+import numpy as np
 from pathlib import Path
 from typing import List
 
@@ -30,7 +33,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Unified Training for SVAMITVA Hackathon")
 
     # Shared Data Path
-    p.add_argument("--train_dirs", nargs="+", default=["data/MAP1"], 
+    p.add_argument("--train_dirs", nargs="+", default=["/Users/aaronr/Desktop/DATA/MAP2"], 
                    help="Directories containing MAP*.tif + shapefiles")
     
     # Training Hyperparameters
@@ -60,6 +63,13 @@ def run_step(cmd: List[str], step_name: str):
 
 def main():
     args = parse_args()
+    # Global Seed
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+
     project_root = Path(__file__).resolve().parent
     
     logger.info("=" * 60)

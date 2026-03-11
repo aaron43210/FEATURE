@@ -24,6 +24,7 @@ Dataset structure expected:
       MAP2/ ... MAP5/
 """
 
+import random
 import logging
 import math
 from pathlib import Path
@@ -34,7 +35,14 @@ import numpy as np
 import rasterio
 import torch
 from rasterio.windows import Window
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset, DataLoader, Subset
+
+# Global Seed for reproducibility
+random.seed(42)
+np.random.seed(42)
+torch.manual_seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(42)
 
 from .augmentation import get_train_transforms, get_val_transforms
 from .preprocessing import OrthophotoPreprocessor, ShapefileAnnotationParser
@@ -476,7 +484,10 @@ class SvamitvaDataset(Dataset):
                 )
             logger.info(
                 "  → %d tiles from %s (%d×%dpx)",
-                len(samples) - n_before, map_dir.name, H, W
+                len(samples) - n_before,
+                map_dir.name,
+                H,
+                W
             )
 
         if not samples:

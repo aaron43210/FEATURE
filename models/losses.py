@@ -80,8 +80,8 @@ class BinaryFocalLoss(nn.Module):
             if mask.ndim == 3:
                 mask = mask.unsqueeze(1)
             loss = loss * mask
-            return loss.sum() / (mask.sum() + 1e-7)
-        return loss.mean()
+            return torch.sum(loss) / (torch.sum(mask) + 1e-7)
+        return torch.mean(loss)
 
 
 # ── Lovász Hinge Loss ────────────────────────────────────────────────────────

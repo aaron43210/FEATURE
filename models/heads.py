@@ -171,8 +171,8 @@ class DetectionHead(nn.Module):
     Combines centripetal-shift style features with segmentation.
     """
 
-    def __init__(self, in_channels: int=256, mid_channels: int=64,
-                 dropout: float=0.1):
+    def __init__(self, in_channels: int = 256, mid_channels: int = 64,
+                 dropout: float = 0.1):
         super().__init__()
         self.stem = ConvBNReLU(in_channels, mid_channels)
         # Multi-scale aggregation
@@ -201,8 +201,8 @@ class PointHead(nn.Module):
     Uses global context aggregation before predicting.
     """
 
-    def __init__(self, in_channels: int=256, mid_channels: int=64,
-                 dropout: float=0.1):
+    def __init__(self, in_channels: int = 256, mid_channels: int = 64,
+                 dropout: float = 0.1):
         super().__init__()
         # Global context branch
         self.global_ctx = nn.Sequential(
